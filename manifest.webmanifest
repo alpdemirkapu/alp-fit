@@ -2,7 +2,7 @@
   "id": "./",
   "name": "ALP FIT — Antrenman ve Beslenme",
   "short_name": "ALP FIT",
-  "description": "Kişisel antrenman, beslenme ve gelişim takibi. Çevrimdışı çalışır.",
+  "description": "İki kişilik bulut senkronizasyonlu antrenman ve beslenme takip uygulaması.",
   "lang": "tr",
   "start_url": "./",
   "scope": "./",

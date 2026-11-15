@@ -1,8 +1,10 @@
 'use strict';
 (() => {
-  const STORE_KEY = 'alpfit-app-data-v1';
+  const LEGACY_STORE_KEY = 'alpfit-app-data-v1';
+  const V2_CACHE_PREFIX = 'alpfit-v2-cache-';
+  const V2_DIRTY_PREFIX = 'alpfit-v2-pending-';
   const APP_VERSION = 1; // Yerel veri şeması v1 kalır: mevcut kayıtlar silinmez.
-  const APP_LABEL = '1.1';
+  const APP_LABEL = '2.0';
   const $ = (selector) => document.querySelector(selector);
   const app = $('#app');
   const today = () => {
@@ -18,7 +20,7 @@
   const dateShort = date => new Date(date+'T12:00:00').toLocaleDateString('tr-TR',{day:'numeric',month:'short'});
   const offsetDate = (date, delta) => {const d = new Date(date+'T12:00:00'); d.setDate(d.getDate()+delta);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
   // Mevcut v1 kayıt anahtarı değişmiyor; sürüm yükseltme yalnızca eksik alanları ekler.
-  const initialProfile = () => ({heightCm:173,weightKg:78,age:31,sex:'male',activity:'moderate',goal:'lose',confirmed:false});
+  const initialProfile = () => ({heightCm:'',weightKg:'',age:'',sex:'',activity:'moderate',goal:'maintain',confirmed:false});
   const initialDay = n => ({id:`day${n}`,name:`${n}. Gün`,focus:'Hareketleri ekle',exercises:[]});
   const emptyData = () => ({version:APP_VERSION,accent:'lime',goals:{calories:null,protein:null},
     days:[1,2,3,4,5].map(initialDay),workoutLogs:{},foodLogs:{},customFoods:[],weightLogs:{},profile:initialProfile()});
@@ -33,8 +35,7 @@
     if(!['lime','blue','orange'].includes(d.accent))d.accent='lime';
     return d;
   }
-  function load(){try{return normalizeData(JSON.parse(localStorage.getItem(STORE_KEY)));}catch(e){return emptyData();}}
-  let data=load();
+  let data=emptyData();
   let view='home', selectedDate=today(), selectedDayId=data.days[0]?.id || 'day1', timerUntil=0, timerSeconds=0, toastTimeout=0;
   const foodLibrary = [
     {id:'oats',name:'Yulaf ezmesi',emoji:'🥣',unit:'g',base:100,kcal:389,p:16.9,c:66.3,f:6.9},
@@ -52,7 +53,64 @@
   ];
   const foodById = id => [...foodLibrary,...data.customFoods].find(food => food.id===id);
   const meals = ['Öğün 1','Öğün 2','Ara öğün','Diğer'];
-  function save(){try{localStorage.setItem(STORE_KEY,JSON.stringify(data));return true;}catch(err){toast('Kayıt yapılamadı. Depolama alanını kontrol et.');return false;}}
+  // Her hesap kendi izole edilmiş yerel önbelleğine sahiptir. Sunucu asıl kaynaktır.
+  const config=window.ALPFIT_CONFIG||{};
+  const configReady=/^https:\/\/[^/]+\.supabase\.co$/.test(config.url||'') &&
+    !!(config.anonKey||'').trim() && !String(config.anonKey).includes('_BURAYA');
+  const client=configReady && window.supabase ? window.supabase.createClient(config.url,config.anonKey,{
+    auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}
+  }) : null;
+  let currentUser=null, cloudRevision=0, syncTimer=0, syncRunning=false, dirtyCounter=0, savedCounter=0,
+      syncBlocked=false, syncMessage='', loginLoading=false, userLoadPromise=null;
+  let outgoingShares=[], incomingShares=[], inviteCode='', activeOwner='', sharedDays=[], sharedRevision=0;
+  const cacheKey=()=>V2_CACHE_PREFIX+currentUser?.id;
+  const pendingKey=()=>V2_DIRTY_PREFIX+currentUser?.id;
+  function save(){
+    if(!currentUser){toast('Önce hesabına giriş yap.');return false;}
+    try {
+      localStorage.setItem(cacheKey(),JSON.stringify(data));
+      localStorage.setItem(pendingKey(),'1');
+      dirtyCounter++;
+      if(!syncBlocked)scheduleSync();
+      else toast('Buluta gönderilemiyor. Değişiklikler yalnızca cihazda; önce JSON yedek al.');
+      updateSyncIndicator();
+      return true;
+    }catch(err){toast('Yerel kayıt yapılamadı. Depolama alanını kontrol et.');return false;}
+  }
+  function scheduleSync(){clearTimeout(syncTimer);syncTimer=setTimeout(flushCloud,450);}
+  function updateSyncIndicator(){
+    const el=$('#sync-status');if(!el)return;
+    let label='☁ Eşitlendi', color='var(--accent)';
+    if(!currentUser){label='Hesap gerekli';color='var(--muted)';}
+    else if(syncBlocked){label='⚠ Çakışma / Hata';color='var(--danger)';}
+    else if(dirtyCounter>savedCounter || syncRunning){label='↗ Kaydediliyor';color='var(--sky)';}
+    else if(!navigator.onLine){label='Çevrimdışı';color='var(--danger)';}
+    el.textContent=label;el.style.color=color;
+  }
+  function isConflict(err){return /VERSION_CONFLICT|PROGRAM_CHANGED/.test(err?.message||'');}
+  async function flushCloud(){
+    if(!client||!currentUser||syncRunning||syncBlocked||dirtyCounter===savedCounter)return;
+    if(!navigator.onLine){syncMessage='İnternet bağlantısı yok. Yerel yedek saklandı.';updateSyncIndicator();return;}
+    syncRunning=true;const expected=cloudRevision, snapshot=JSON.parse(JSON.stringify(data));
+    const generation=dirtyCounter, userId=currentUser.id;
+    updateSyncIndicator();
+    try{
+      const {data:newRevision,error}=await client.rpc('alpfit_save_state',{p_payload:snapshot,p_expected:expected});
+      if(error)throw error;
+      if(currentUser?.id!==userId)return;
+      cloudRevision=Number(newRevision);savedCounter=generation;syncMessage='';
+      if(dirtyCounter===savedCounter)localStorage.removeItem(pendingKey());
+    }catch(err){
+      if(currentUser?.id!==userId)return;
+      syncBlocked=true;
+      syncMessage=isConflict(err)?'Başka bir cihazda yeni kayıtlar var. Yerel yedeğini indir, sonra buluttan yenile.':'Bulut kaydedemedi: '+err.message;
+      toast(syncMessage);
+    }finally{
+      syncRunning=false;updateSyncIndicator();
+      if(currentUser?.id===userId&&!syncBlocked&&dirtyCounter>savedCounter)scheduleSync();
+    }
+  }
+
   function toast(message){const el=$('#toast');el.textContent=message;el.classList.add('show');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>el.classList.remove('show'),2600);}
   function getDay(){return data.days.find(d=>d.id===selectedDayId) || data.days[0];}
   function sessionKey(dayId=selectedDayId,date=selectedDate){return `${date}|${dayId}`;}
@@ -103,7 +161,7 @@
   }
   function renderWorkout(){
     const day=getDay(), sess=getSession(), stats=sessionStats(day);
-    app.innerHTML=`<p class="eyebrow">ANTRENMAN TAKİBİ</p><h1>Programım</h1><p class="lead">Hareketlerini düzenle; her setin ağırlığını ve tekrarını kaydet.</p>${dateNav()}
+    app.innerHTML=`<p class="eyebrow">ANTRENMAN TAKİBİ</p><h1>Programım</h1><p class="lead">Hareketlerini düzenle; her setin ağırlığını ve tekrarını kaydet.</p><div class="button-row" style="margin-bottom:14px"><button class="secondary" data-nav="shared">💑 Ortak program düzenleyici</button></div>${dateNav()}
       <div class="chips">${data.days.map((d,i)=>`<button class="${d.id===day.id?'active':''}" data-action="select-day" data-id="${esc(d.id)}">${esc(d.name)}</button>`).join('')}</div>
       <div class="card"><div class="between"><div><div class="eyebrow">SEÇİLİ GÜN</div><h2>${esc(day.name)}</h2><p class="hint">${esc(day.focus)}</p></div><button class="icon-mini" data-action="edit-day" title="Günü düzenle" aria-label="Günü düzenle">✎</button></div>
       <div class="kpi-list"><span class="pill">${day.exercises.length} hareket</span><span class="pill">${stats.done} / ${stats.total} set</span>${sess.completedAt?'<span class="pill">✓ Tamamlandı</span>':''}</div><div class="progress"><span style="width:${pct(stats.done,stats.total)}%"></span></div></div>
@@ -167,7 +225,7 @@
       <option value="moderate" ${p.activity==='moderate'?'selected':''}>Orta · hareketli yaşam + düzenli spor</option>
       <option value="high" ${p.activity==='high'?'selected':''}>Yüksek · çok hareketli yaşam / yoğun spor</option></select><p class="hint">Haftada 5 antrenman yapmak tek başına yüksek aktivite anlamına gelmez; gün boyu hareketini de hesaba kat.</p></div>
       <div class="field"><label for="profile-goal">Hedefim</label><select id="profile-goal" name="goal"><option value="lose" ${p.goal==='lose'?'selected':''}>Yağ kaybı / kilo verme</option><option value="maintain" ${p.goal==='maintain'?'selected':''}>Kilomu koruma</option><option value="gain" ${p.goal==='gain'?'selected':''}>Kas kazanımı</option></select></div>
-      <button type="submit" class="primary wide">📐 Boy-kilo analizimi hesapla</button><p class="hint">Başlangıçtaki 173 cm, 78 kg ve 31 yaş değerleri önceden konuştuğumuz bilgilerdir; istersen değiştir.</p></form></div>
+      <button type="submit" class="primary wide">📐 Boy-kilo analizimi hesapla</button><p class="hint">Her hesap kendi boyunu, kilosunu ve yaşını girer. Hedefler hesabına özel kalır.</p></form></div>
       ${estimate?`<div class="card analysis-results"><div class="between"><h3>Hedefine göre tahmini sonuç</h3><span class="pill">${esc(goalNames[estimate.goal])}</span></div>
       <div class="analysis-grid"><div><span class="small muted">Vücut kitle indeksi</span><strong>${fmt(estimate.bmi,1)}</strong><span class="tiny muted">kg/m² (kas oranını göstermez)</span></div><div><span class="small muted">Dinlenme enerjisi</span><strong>${fmt(estimate.rmr)}</strong><span class="tiny muted">kcal/gün</span></div><div><span class="small muted">Tahmini günlük ihtiyaç</span><strong>${fmt(estimate.tdee)}</strong><span class="tiny muted">kcal/gün</span></div></div>
       <p class="hint">${goalDesc[estimate.goal]}. Protein hesabı: ${fmt(estimate.proteinFactor,1)} g/kg.</p>
@@ -176,16 +234,20 @@
       <p class="hint">Hesaplama mevcut günlük hedeflerini otomatik değiştirmez. Bu butona basarsan uygular. Kilo veya aktivite değişiminde yeniden hesaplayabilirsin.</p></div>`:`<div class="card soft"><p class="small" style="margin:0">Boy, kilo, yaş ve hedef bilgilerini kontrol edip <strong>Hesapla</strong> tuşuna bas. Sonucu onayladıktan sonra beslenme ekranına aktarabilirsin.</p></div>`}
       ${sectionTitle('Günlük hedefler · elle düzenle')}<div class="card"><form data-form="goals"><div class="two-cols"><div class="field"><label for="goal-calories">Kalori (kcal)</label><input id="goal-calories" name="calories" type="number" inputmode="numeric" min="0" max="10000" placeholder="Henüz belirlenmedi" value="${data.goals.calories??''}"></div><div class="field"><label for="goal-protein">Protein (g)</label><input id="goal-protein" name="protein" type="number" inputmode="decimal" min="0" max="1000" step="0.1" placeholder="Henüz belirlenmedi" value="${data.goals.protein??''}"></div></div><button type="submit" class="secondary wide">Hedefleri elle kaydet</button><p class="hint">Otomatik önerileri kullanmak istemiyorsan kalori ve protein hedeflerini kendin girebilirsin.</p></form></div>
       ${sectionTitle('Tema rengi')}<div class="card"><div class="color-choice">${[['lime','#b8fb5b','Yeşil'],['blue','#8edcff','Mavi'],['orange','#ffc17f','Turuncu']].map(([id,color,name])=>`<button data-action="accent" data-id="${id}" class="${data.accent===id?'selected':''}"><span class="swatch" style="background:${color}"></span>${name}</button>`).join('')}</div></div>
-      ${sectionTitle('Veri yedekleme')}<div class="card"><h3>📦 Kayıtların sende kalsın</h3><p class="hint" style="margin-bottom:16px">Kayıtlar bu cihazın yerel depolamasındadır. Güncellemeden veya telefon değiştirmeden önce JSON yedeğini özel bir alana indir.</p><div class="button-row"><button class="primary" data-action="export">↓ Yedek indir</button><button class="secondary" data-action="import">↑ Yedek yükle</button></div></div>
-      ${sectionTitle('Hakkında')}<div class="card"><h3>ALP FIT v${APP_LABEL}</h3><p class="hint">Ücretsiz, reklamsız, çevrimdışı çalışabilen kişisel web uygulaması. Hesap veya bulut senkronizasyonu yoktur. Başka cihazdaki kayıtlar otomatik gelmez.</p><p class="hint">Besin değerleri yaklaşık tahminidir. Kalori hesabı Mifflin–St Jeor formülü ve aktivite katsayısı kullanır; bireysel ihtiyaçtan farklı olabilir. Protein miktarı sağlıklı, direnç egzersizi yapan yetişkinler için genel hedef niteliğindedir. VKİ kas/yağ ayrımı yapmaz. Tıbbi öneri yerine geçmez.</p></div>
-      <div class="card"><h3 style="color:var(--danger)">Tehlikeli bölge</h3><p class="hint" style="margin-bottom:12px">Sıfırlamak tüm antrenman, yemek ve kilo kayıtlarını bu cihazdan siler. Önce yedek al.</p><button class="danger-button" data-action="reset">Tüm verileri sıfırla</button></div>`;
+      ${sectionTitle('Veri yedekleme')}<div class="card"><h3>📦 Kayıtların sende kalsın</h3><p class="hint" style="margin-bottom:16px">Kayıtlar hesaba bağlı bulutta saklanır. Yine de düzenli JSON yedek al. Eski v1.1 yedeğini içeri aktarabilirsin.</p><div class="button-row"><button class="primary" data-action="export">↓ Yedek indir</button><button class="secondary" data-action="import">↑ Yedek yükle</button></div></div>
+      ${renderCloudSettings()}
+      ${sectionTitle('Hakkında')}<div class="card"><h3>ALP FIT v${APP_LABEL}</h3><p class="hint">Ücretsiz plan üzerinde hesaplarla bulut senkronizasyonu. Giriş ve senkronizasyon için internet gerekir. Ortak erişim yalnızca program tanımlarını kapsar.</p><p class="hint">Besin değerleri yaklaşık tahminidir. Kalori hesabı Mifflin–St Jeor formülü ve aktivite katsayısı kullanır; bireysel ihtiyaçtan farklı olabilir. Protein miktarı sağlıklı, direnç egzersizi yapan yetişkinler için genel hedef niteliğindedir. VKİ kas/yağ ayrımı yapmaz. Tıbbi öneri yerine geçmez.</p></div>
+      <div class="card"><h3 style="color:var(--danger)">Tehlikeli bölge</h3><p class="hint" style="margin-bottom:12px">Sıfırlamak hesabındaki antrenman, yemek ve kilo kayıtlarını bulutta da siler. Önce yedek al.</p><button class="danger-button" data-action="reset">Tüm verileri sıfırla</button></div>`;
   }
   function render(){
+    if(!currentUser){renderAuth();return;}
     document.documentElement.dataset.accent=data.accent||'lime';
     $('#today-chip').textContent=new Date().toLocaleDateString('tr-TR',{day:'numeric',month:'short'}).toUpperCase();
     const tabs=[['home','⌂','Ana Sayfa'],['workout','▣','Antrenman'],['nutrition','◉','Beslenme'],['progress','▥','Gelişim'],['settings','⚙','Ayarlar']];
     $('#bottom-nav').innerHTML=tabs.map(([id,ico,label])=>`<button class="nav-link ${view===id?'active':''}" data-nav="${id}" aria-current="${view===id?'page':'false'}"><span class="nav-icon" aria-hidden="true">${ico}</span>${label}</button>`).join('');
-    ({home:renderHome,workout:renderWorkout,nutrition:renderNutrition,progress:renderProgress,settings:renderSettings}[view]||renderHome)();
+    ({home:renderHome,workout:renderWorkout,nutrition:renderNutrition,progress:renderProgress,settings:renderSettings,shared:renderShared}[view]||renderHome)();
+    updateSyncIndicator();
+    if(syncBlocked)app.insertAdjacentHTML('afterbegin',`<div class="sync-warning"><strong>⚠ Senkronizasyon sorunu</strong><p>${esc(syncMessage)} Kayıt yapmadan önce Ayarlar'a git.</p><button class="secondary" data-nav="settings">Ayarları aç</button></div>`);
   }
   function openDialog(title,body){$('#dialog-title').textContent=title;$('#dialog-content').innerHTML=body;$('#dialog-backdrop').hidden=false;document.body.style.overflow='hidden';const el=$('#dialog-content input, #dialog-content select');if(el) setTimeout(()=>el.focus(),80);}
   function closeDialog(){$('#dialog-backdrop').hidden=true;$('#dialog-content').innerHTML='';document.body.style.overflow='';}
@@ -235,8 +297,240 @@
     d.accent=['lime','blue','orange'].includes(d.accent)?d.accent:'lime';return d;
   }
   async function importBackup(file){if(!file)return;if(file.size>2_000_000){toast('Dosya çok büyük (maksimum 2 MB).');return;}
-    try{const parsed=JSON.parse(await file.text());const next=validBackup(parsed);if(!confirm('Bu yedek, şu anki bütün kayıtlarının üzerine yazacak. Devam edilsin mi?'))return;data=normalizeData(next);selectedDayId=data.days[0].id;save();render();toast('Yedek yüklendi.');}catch(e){toast('Yedek açılamadı: '+e.message);}finally{$('#import-file').value='';}
+    try{const parsed=JSON.parse(await file.text());const next=validBackup(parsed);if(!confirm('Bu yedek, şu anki bütün kayıtlarının üzerine yazacak. Devam edilsin mi?'))return;data=normalizeData(next);selectedDayId=data.days[0].id;save();render();toast('Yedek alındı, buluta gönderiliyor.');}catch(e){toast('Yedek açılamadı: '+e.message);}finally{$('#import-file').value='';}
   }
+  function renderAuth(){
+    $('#bottom-nav').innerHTML='';
+    $('#today-chip').textContent='';
+    updateSyncIndicator();
+    const ready=!!client;
+    app.innerHTML=`<div class="auth-wrap"><p class="eyebrow">ALP FIT CLOUD · V2.0</p><h1>İki hesap.<br><span style="color:var(--accent)">Tek uygulama.</span></h1><p class="lead">Bilgisayardan programını kur, iPhone'dan takip et. Her kullanıcının verisi ayrıdır.</p>
+    ${!ready?`<div class="card"><h3>⚙ İlk kurulum gerekli</h3><p class="hint">Supabase bağlantısı henüz ayarlanmadı. Bilgisayarında <strong>config.js</strong> dosyasına Project URL ve <strong>publishable / anon</strong> anahtarını yaz. Önce <strong>supabase-setup.sql</strong> dosyasını Supabase SQL Editor'da çalıştır.</p><p class="hint">Asla secret veya service_role anahtarını ekleme.</p></div>`:
+    `<div class="card"><h3>Hesabına giriş yap</h3><p class="hint" style="margin:9px 0 16px">Her kişi kendi e-postası ve şifresiyle giriş yapacak.</p>
+    <form data-form="auth"><div class="field"><label>E-posta</label><input type="email" name="email" autocomplete="email" required placeholder="ornek@eposta.com"></div>
+    <div class="field"><label>Şifre</label><input type="password" name="password" autocomplete="current-password" minlength="6" required placeholder="En az 6 karakter"></div>
+    <div class="field"><label>İşlem</label><select name="mode"><option value="login">Giriş yap</option><option value="signup">Yeni hesap oluştur</option></select></div>
+    <button class="primary wide" type="submit" ${loginLoading?'disabled':''}>${loginLoading?'Bağlanılıyor…':'Devam et →'}</button></form><p class="hint" style="margin-top:14px">İki hesabı Supabase Dashboard → Authentication → Users altında oluşturmak en kolay yoldur. Ücretsiz varsayılan e-posta servisi sınırlıdır; rehbere bak.</p></div>`}
+    <div class="card soft"><p class="small" style="margin:0">🔒 Eşinin antrenmanlarını düzenlemek için onun uygulamasından oluşturacağı tek kullanımlık izin kodunu girmen gerekir. Kilo, beslenme ve set kayıtları paylaşılmaz.</p></div></div>`;
+  }
+  async function authSubmit(email,password,mode){
+    if(!client||loginLoading)return;
+    loginLoading=true;renderAuth();
+    try{
+      const result=mode==='signup'?await client.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}}):
+        await client.auth.signInWithPassword({email,password});
+      if(result.error)throw result.error;
+      if(result.data?.session)await startUser(result.data.session.user);
+      else toast('Hesap oluşturuldu. E-postana gelen doğrulama bağlantısını aç, ardından giriş yap.');
+    }catch(err){toast('Giriş yapılamadı: '+err.message);}
+    finally{loginLoading=false;if(!currentUser)renderAuth();}
+  }
+  async function bootCloud(){
+    if('serviceWorker' in navigator && location.protocol.startsWith('http'))
+      navigator.serviceWorker.register('./sw.js').catch(()=>{});
+    if(!client){renderAuth();return;}
+    app.innerHTML='<div class="card"><h2>☁ ALP FIT hesabın yükleniyor…</h2></div>';
+    client.auth.onAuthStateChange((event,session)=>{
+      if(event==='SIGNED_OUT'){clearSession();return;}
+      if((event==='SIGNED_IN'||event==='INITIAL_SESSION')&&session?.user?.id!==currentUser?.id){
+        // Auth callback içinde Supabase sorgusu başlatma: callback sonrası sıraya koy.
+        setTimeout(()=>startUser(session.user).catch(err=>toast('Hesap açılamadı: '+err.message)),0);
+      }
+    });
+    const {data:{session},error}=await client.auth.getSession();
+    if(error){toast(error.message);renderAuth();return;}
+    if(session?.user)await startUser(session.user);
+    else renderAuth();
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshFromCloud(false);});
+    window.addEventListener('online',()=>{updateSyncIndicator();if(dirtyCounter!==savedCounter)scheduleSync();else refreshFromCloud(false);});
+    setInterval(()=>{if(!document.hidden)refreshFromCloud(false);},30000);
+  }
+  async function startUser(user){
+    if(currentUser?.id===user.id)return;
+    if(userLoadPromise)return userLoadPromise;
+    userLoadPromise=(async()=>{
+      app.innerHTML='<div class="card"><h2>☁ Kişisel kayıtlar yükleniyor…</h2></div>';
+      let result=await client.from('alpfit_states').select('payload,revision').eq('user_id',user.id).maybeSingle();
+      if(result.error)throw result.error;
+      if(!result.data){
+        const created=await client.from('alpfit_states').insert({user_id:user.id,payload:emptyData()});
+        if(created.error&&created.error.code!=='23505')throw created.error;
+        result=await client.from('alpfit_states').select('payload,revision').eq('user_id',user.id).single();
+        if(result.error)throw result.error;
+      }
+      currentUser=user;
+      cloudRevision=Number(result.data.revision);
+      dirtyCounter=0;savedCounter=0;syncBlocked=false;syncMessage='';activeOwner='';
+      // Tamamlanmamış yerel düzenlemeyi kullanıcı onayı olmadan bulut kaydıyla ezme.
+      const hasPending=localStorage.getItem(pendingKey())==='1';
+      if(hasPending){
+        try{data=normalizeData(JSON.parse(localStorage.getItem(cacheKey())));}
+        catch{data=normalizeData(result.data.payload);}
+        syncBlocked=true;
+        syncMessage='Bu cihazda henüz eşitlenmemiş kayıtlar var. Yedek indir veya bulutu yeniden yükle.';
+      }else{
+        data=normalizeData(result.data.payload);
+        localStorage.setItem(cacheKey(),JSON.stringify(data));
+      }
+      selectedDayId=data.days[0]?.id||'day1';selectedDate=today();view='home';render();
+      await loadShares();
+      if(syncBlocked)toast(syncMessage);
+    })();
+    try{return await userLoadPromise;}
+    catch(err){currentUser=null;renderAuth();throw err;}
+    finally{userLoadPromise=null;}
+  }
+  function clearSession(){
+    clearTimeout(syncTimer);currentUser=null;data=emptyData();cloudRevision=0;dirtyCounter=0;
+    savedCounter=0;syncBlocked=false;syncMessage='';outgoingShares=[];incomingShares=[];inviteCode='';
+    activeOwner='';sharedDays=[];renderAuth();
+  }
+  async function logoutUser(){
+    if(syncRunning||dirtyCounter!==savedCounter){
+      if(!confirm('Bulutta henüz kaydedilmemiş değişiklik olabilir. Önce yedek indirmen önerilir. Yine de çıkılsın mı?'))return;
+    }
+    const {error}=await client.auth.signOut();if(error)toast(error.message);else clearSession();
+  }
+  async function refreshFromCloud(showMessage=false,discard=false){
+    if(!currentUser||!client)return;
+    if(!showMessage&&!discard&&/^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement?.tagName||''))return;
+    if((syncBlocked||dirtyCounter!==savedCounter||syncRunning)&&!discard){
+      if(showMessage)toast('Önce eşitleme sorunu çözülmeli. Yerel yedeğini indir.');return;
+    }
+    const userId=currentUser.id;
+    try{
+      const {data:row,error}=await client.from('alpfit_states').select('payload,revision').eq('user_id',userId).single();
+      if(error)throw error;
+      if(currentUser?.id!==userId)return;
+      if(discard||Number(row.revision)!==cloudRevision){
+        data=normalizeData(row.payload);cloudRevision=Number(row.revision);syncBlocked=false;syncMessage='';dirtyCounter=0;savedCounter=0;
+        localStorage.setItem(cacheKey(),JSON.stringify(data));localStorage.removeItem(pendingKey());
+        selectedDayId=data.days.find(d=>d.id===selectedDayId)?.id||data.days[0].id;
+        render();if(showMessage)toast('Bulut kayıtları yüklendi.');
+      }else if(showMessage)toast('Tüm kayıtların güncel.');
+    }catch(err){if(showMessage)toast('Yenileme hatası: '+err.message);}
+  }
+  function importLegacy(){
+    if(!localStorage.getItem(LEGACY_STORE_KEY)){toast('Bu tarayıcıda eski ALP FIT kaydı bulunmadı. JSON dosyanı Yedek yükle ile aktarabilirsin.');return;}
+    try{
+      const legacy=validBackup(JSON.parse(localStorage.getItem(LEGACY_STORE_KEY)));
+      if(!confirm('Bu tarayıcıdaki eski v1.x kayıtlarını BU HESABA aktaracağız. Mevcut bulut kayıtlarının üzerine yazılacak. Önce yedek aldın mı?'))return;
+      data=normalizeData(legacy);save();render();toast('Eski kayıt buluta gönderiliyor.');
+    }catch(err){toast('Eski kayıt açılamadı: '+err.message);}
+  }
+  async function loadShares(){
+    if(!currentUser)return;
+    const [out,inc]=await Promise.all([
+      client.from('alpfit_shares').select('owner_id,editor_id,program_label,created_at').eq('owner_id',currentUser.id),
+      client.from('alpfit_shares').select('owner_id,editor_id,program_label,created_at').eq('editor_id',currentUser.id)
+    ]);
+    if(out.error||inc.error){toast('Paylaşımlar alınamadı: '+(out.error||inc.error).message);return;}
+    outgoingShares=out.data||[];incomingShares=inc.data||[];
+    if(view==='shared'||view==='settings')render();
+  }
+  function renderCloudSettings(){
+    const legacyAvailable=!!localStorage.getItem(LEGACY_STORE_KEY);
+    const warning=syncBlocked?`<div class="sync-warning"><strong>⚠ Bulut eşitlemesi durduruldu</strong><p>${esc(syncMessage)}</p><div class="button-row"><button class="secondary" data-action="cloud-export-pending">Yerel yedek indir</button><button class="secondary" data-action="cloud-retry">Tekrar dene</button></div><button style="margin-top:8px" class="danger-button wide" data-action="cloud-discard-pending">Yerel değişiklikleri bırak · Buluttan yeniden yükle</button></div>`:'';
+    return `${sectionTitle('Hesabım & bulut')}<div class="card"><h3>☁ ${esc(currentUser?.email||'Hesabım')}</h3><p class="hint">Bu hesabın verileri diğer cihazlarda aynı e-posta ve şifreyle görünür. İkinizin hesapları ayrıdır.</p>${warning}<div class="button-row" style="margin-top:15px"><button class="secondary" data-action="cloud-refresh">↻ Buluttan yenile</button><button class="ghost" data-action="cloud-logout">Çıkış yap</button></div>
+    ${legacyAvailable?'<button class="secondary wide" style="margin-top:10px" data-action="legacy-import">↑ Bu tarayıcıdaki eski v1.x kayıtlarını aktar</button>':''}<div class="line"></div><form data-form="password-change"><h3 style="margin-bottom:10px">Şifremi değiştir</h3><div class="field"><label>Yeni şifre (en az 8 karakter)</label><input name="password1" type="password" minlength="8" autocomplete="new-password" required></div><div class="field"><label>Yeni şifreyi tekrar yaz</label><input name="password2" type="password" minlength="8" autocomplete="new-password" required></div><button class="secondary wide" type="submit">Şifreyi değiştir</button></form></div>
+    ${sectionTitle('Program paylaşımı · yalnızca antrenman')}<div class="card"><p class="small">Eşin, <strong>kendi hesabından</strong> izin kodu üretip sana gönderebilir. Kodu sen kendi hesabında girersin. Yalnızca programındaki gün ve hareketleri düzenleyebilirsin; kilo, beslenme ve geçmiş setler paylaşılmaz.</p>
+    <div class="field"><label>Başkasına göstereceğim programın adı</label><input id="share-label" maxlength="60" placeholder="Örn. Eşimin programı" value="Antrenman programım"></div>
+    <button class="secondary wide" data-action="new-share-code">+ Tek kullanımlık izin kodu oluştur (15 dk)</button>
+    ${inviteCode?`<div class="code-share"><label>Kodunu güvenerek paylaşacağın kişiye ilet</label><input readonly value="${esc(inviteCode)}" aria-label="Paylaşım kodu"><button class="ghost wide" data-action="copy-share-code">Kodu kopyala</button></div>`:''}
+    <div class="line"></div><form data-form="redeem-share"><div class="field"><label>Bana verilen paylaşım kodu</label><input name="code" placeholder="24 karakterlik kod" maxlength="24" required autocomplete="off"></div><button type="submit" class="primary wide">✓ İzin kodunu kullan</button></form>
+    ${outgoingShares.length?`<div class="line"></div><h3 style="margin-bottom:10px">İzin verdiğim hesaplar</h3>${outgoingShares.map(s=>`<div class="share-row"><span class="small">${esc(s.program_label)}<br><span class="muted tiny">Kullanıcı ${esc(s.editor_id.slice(0,8))}…</span></span><button class="danger-button" data-action="revoke-share" data-id="${esc(s.editor_id)}">İzni kaldır</button></div>`).join('')}`:''}
+    ${incomingShares.length?`<div class="line"></div><button class="secondary wide" data-nav="shared">💑 Düzenleyebildiğim programları aç (${incomingShares.length})</button>`:''}
+    </div>`;
+  }
+  async function changePassword(p1,p2){
+    if(!currentUser)return;
+    if(p1.length<8||p1!==p2){toast('Şifre en az 8 karakter olmalı ve iki giriş aynı olmalı.');return;}
+    const {error}=await client.auth.updateUser({password:p1});
+    if(error){toast('Şifre değiştirilemedi: '+error.message);return;}
+    render();toast('Şifren güncellendi.');
+  }
+  async function createShareCode(){
+    if(!currentUser)return;
+    const label=$('#share-label')?.value?.trim()||'Ortak antrenman';
+    if(!confirm('Bu kodu alan kişi, senin antrenman programındaki gün ve hareketleri düzenleyebilir. Kilo, beslenme ve set geçmişine erişemez. İzin verecek misin?'))return;
+    const {data:code,error}=await client.rpc('alpfit_create_share_code',{p_label:label});
+    if(error){toast('Kod üretilemedi: '+error.message);return;}
+    inviteCode=code;render();toast('Kod 15 dakika geçerli ve tek kullanımlık.');
+  }
+  async function redeemShareCode(code){
+    if(!currentUser)return;
+    const {error}=await client.rpc('alpfit_redeem_share_code',{p_code:code.trim().toUpperCase()});
+    if(error){toast('Kod kabul edilmedi: '+error.message);return;}
+    await loadShares();moveTo('shared');toast('İzin alındı. Programları görebilirsin.');
+  }
+  async function revokeShare(editorId){
+    if(!confirm('Bu hesabın antrenman programını düzenleme izni iptal edilsin mi?'))return;
+    const {error}=await client.from('alpfit_shares').delete().eq('owner_id',currentUser.id).eq('editor_id',editorId);
+    if(error){toast('İzin kaldırılamadı: '+error.message);return;}
+    await loadShares();toast('Program düzenleme izni kaldırıldı.');
+  }
+  function renderShared(){
+    app.innerHTML=`<p class="eyebrow">ORTAK YÖNETİM</p><h1>Paylaşılan programlar</h1><p class="lead">İzin verilen kullanıcıların yalnızca program tanımlarını değiştirebilirsin.</p>
+    ${!incomingShares.length?'<div class="empty"><div class="emoji">🔐</div><strong>Henüz izin verilen program yok</strong><p>Eşin Ayarlar bölümünden izin kodu üretip sana gönderebilir.</p><button class="secondary" data-nav="settings">Ayarlar & izin kodları →</button></div>':''}
+    ${incomingShares.map(s=>`<div class="card between"><div><h3>${esc(s.program_label)}</h3><p class="hint">Program sahibi: ${esc(s.owner_id.slice(0,8))}…</p></div><button class="secondary" data-action="shared-open" data-id="${esc(s.owner_id)}">Düzenle →</button></div>`).join('')}
+    ${activeOwner?`<div class="card"><div class="between"><h2>Program düzenleyici</h2><button class="ghost" data-action="shared-close">Kapat ✕</button></div><p class="hint" style="margin-top:9px">Kaydettiğinde karşı tarafın günleri ve hareketleri güncellenir. Tamamlanan setler ve kişisel veriler değişmez.</p></div>
+    ${sharedDays.map((day,i)=>`<div class="card"><div class="between"><div><h3>${esc(day.name)}</h3><p class="hint">${esc(day.focus||'')} · ${(day.exercises||[]).length} hareket</p></div><button class="icon-mini" data-action="shared-edit-day" data-index="${i}">✎</button></div><div class="line"></div>
+    ${(day.exercises||[]).map((ex,k)=>`<div class="share-row"><span class="small"><strong>${esc(ex.name)}</strong><br><span class="muted">${Number(ex.sets)} set × ${esc(ex.reps)} tekrar · ${Number(ex.rest||90)} sn</span></span><div class="flex"><button class="icon-mini" data-action="shared-edit-exercise" data-index="${i}" data-exindex="${k}" aria-label="Hareket düzenle">✎</button><button class="icon-mini" data-action="shared-delete-exercise" data-index="${i}" data-exindex="${k}" aria-label="Hareket sil">✕</button></div></div>`).join('')}
+    <button class="ghost wide" style="margin-top:12px" data-action="shared-add-exercise" data-index="${i}">+ Hareket ekle</button></div>`).join('')}`:''}
+    <button class="secondary" data-nav="workout">← Kendi programıma dön</button>`;
+  }
+  async function openShared(ownerId){
+    const {data:program,error}=await client.rpc('alpfit_read_shared_program',{p_owner:ownerId});
+    if(error){toast('Ortak program açılamadı: '+error.message);return;}
+    if(!Array.isArray(program.days)){toast('Ortak program geçersiz.');return;}
+    sharedDays=program.days;sharedRevision=Number(program.revision);activeOwner=ownerId;
+    moveTo('shared');
+  }
+  async function persistSharedDays(nextDays){
+    if(!activeOwner)return;
+    const {data:nextRevision,error}=await client.rpc('alpfit_update_shared_program',{
+      p_owner:activeOwner,p_expected:sharedRevision,p_days:nextDays
+    });
+    if(error){
+      if(isConflict(error)){
+        toast('Program başka cihazda değişti. Güncel program yeniden açılıyor.');await openShared(activeOwner);
+      }else toast('Program kaydedilemedi: '+error.message);
+      return;
+    }
+    sharedDays=nextDays;sharedRevision=Number(nextRevision);closeDialog();render();toast('Paylaşılan program kaydedildi.');
+  }
+  function showSharedDayForm(i){
+    const d=sharedDays[i];if(!d)return;
+    openDialog('Ortak program · gün',`<form data-form="shared-day"><input type="hidden" name="index" value="${i}"><div class="field"><label>Gün adı</label><input name="name" maxlength="45" required value="${esc(d.name)}"></div><div class="field"><label>Odak</label><input name="focus" maxlength="90" value="${esc(d.focus||'')}"></div><button class="primary wide" type="submit">Kaydet</button></form>`);
+  }
+  function updateSharedDay(i,name,focus){
+    if(!name||name.length>45||!sharedDays[i])return;
+    const arr=JSON.parse(JSON.stringify(sharedDays));arr[i].name=name;arr[i].focus=focus;
+    persistSharedDays(arr);
+  }
+  function showSharedExerciseForm(i,k){
+    const ex=k>=0?sharedDays[i]?.exercises?.[k]:null;if(!sharedDays[i])return;
+    openDialog(k>=0?'Ortak hareket düzenle':'Ortak programa hareket ekle',`<form data-form="shared-exercise"><input type="hidden" name="dayindex" value="${i}"><input type="hidden" name="exindex" value="${k}">
+    <div class="field"><label>Hareket</label><input name="name" maxlength="70" required value="${esc(ex?.name||'')}"></div>
+    <div class="two-cols"><div class="field"><label>Set</label><input name="sets" type="number" min="1" max="15" required value="${Number(ex?.sets||3)}"></div><div class="field"><label>Tekrar</label><input name="reps" maxlength="20" required value="${esc(ex?.reps||'10-12')}"></div></div>
+    <div class="two-cols"><div class="field"><label>Başlangıç kg</label><input name="weight" type="number" min="0" max="1000" step="0.5" value="${esc(ex?.weight??'')}"></div><div class="field"><label>Dinlenme (sn)</label><input name="rest" type="number" min="10" max="900" value="${Number(ex?.rest||90)}"></div></div>
+    <button class="primary wide" type="submit">Kaydet</button></form>`);
+  }
+  function updateSharedExercise(di,ei,name,sets,reps,weight,rest){
+    const i=Number(di),k=Number(ei),day=sharedDays[i];
+    if(!day||!name||!reps||Number(sets)<1||Number(sets)>15||name.length>70)return;
+    const arr=JSON.parse(JSON.stringify(sharedDays));
+    const ex={id:k>=0?arr[i].exercises[k].id:uid(),name,sets:Number(sets),reps,
+      weight:weight===''?'':Number(weight),rest:Number(rest||90)};
+    if(k>=0)arr[i].exercises[k]=ex;else arr[i].exercises.push(ex);
+    persistSharedDays(arr);
+  }
+  function removeSharedExercise(i,k){
+    if(!sharedDays[i]?.exercises?.[k])return;
+    if(!confirm('Bu hareket ortak programdan silinsin mi?'))return;
+    const arr=JSON.parse(JSON.stringify(sharedDays));arr[i].exercises.splice(k,1);persistSharedDays(arr);
+  }
+
   document.addEventListener('click',e=>{
     if(e.target.id==='dialog-backdrop') {closeDialog();return;}
     const close=e.target.closest('[data-close-dialog]');if(close){closeDialog();return;}
@@ -244,6 +538,21 @@
     const btn=e.target.closest('[data-action]');if(!btn)return;
     const action=btn.dataset.action, id=btn.dataset.id;
     switch(action){
+      case 'cloud-refresh': refreshFromCloud(true);break;
+      case 'cloud-retry': syncBlocked=false;syncMessage='';scheduleSync();render();toast('Senkronizasyon yeniden deneniyor.');break;
+      case 'cloud-export-pending': exportBackup();break;
+      case 'cloud-discard-pending': if(confirm('Yerel kaydedilmemiş değişiklikleri bırakıp buluttaki sürümü açmak istiyor musun? Önce yedeğini al.'))refreshFromCloud(true,true);break;
+      case 'cloud-logout': logoutUser();break;
+      case 'legacy-import': importLegacy();break;
+      case 'new-share-code': createShareCode();break;
+      case 'copy-share-code': if(inviteCode)navigator.clipboard?.writeText(inviteCode).then(()=>toast('Kod kopyalandı.')).catch(()=>toast('Kodu seçerek kopyala.'));break;
+      case 'revoke-share': revokeShare(id);break;
+      case 'shared-open': openShared(id);break;
+      case 'shared-close': activeOwner='';sharedDays=[];moveTo('shared');break;
+      case 'shared-edit-day': showSharedDayForm(Number(btn.dataset.index));break;
+      case 'shared-add-exercise': showSharedExerciseForm(Number(btn.dataset.index),-1);break;
+      case 'shared-edit-exercise': showSharedExerciseForm(Number(btn.dataset.index),Number(btn.dataset.exindex));break;
+      case 'shared-delete-exercise': removeSharedExercise(Number(btn.dataset.index),Number(btn.dataset.exindex));break;
       case 'prev-date': selectedDate=offsetDate(selectedDate,-1);render();break;
       case 'next-date': selectedDate=offsetDate(selectedDate,1);render();break;
       case 'today': selectedDate=today();render();break;
@@ -283,6 +592,11 @@
   document.addEventListener('submit',e=>{
     const form=e.target.closest('form[data-form]');if(!form)return;e.preventDefault();const fd=new FormData(form);const val=name=>String(fd.get(name)??'').trim();
     switch(form.dataset.form){
+      case 'auth': authSubmit(val('email'),val('password'),val('mode'));break;
+      case 'password-change': changePassword(val('password1'),val('password2'));break;
+      case 'redeem-share': redeemShareCode(val('code'));break;
+      case 'shared-day': updateSharedDay(Number(val('index')),val('name'),val('focus'));break;
+      case 'shared-exercise': updateSharedExercise(val('dayindex'),val('exindex'),val('name'),val('sets'),val('reps'),val('weight'),val('rest'));break;
       case 'body-profile':{
         const profile={heightCm:number(val('height')),weightKg:number(val('weight')),age:number(val('age')),
           sex:val('sex'),activity:val('activity'),goal:val('goal'),confirmed:true};
@@ -321,6 +635,5 @@
   $('#import-file').addEventListener('change',e=>importBackup(e.target.files?.[0]));
   document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDialog();});
   if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(()=>{});
-  save(); // Eksik gün/profil alanlarını ekleyerek eski kaydı aynı anahtarda güncelle.
-  render();
+  bootCloud();
 })();

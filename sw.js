@@ -1,5 +1,5 @@
-const CACHE = 'alp-fit-shell-v1.1-20261116';
-const SHELL = ['./', './index.html', './styles.css?v=1.1', './app.js?v=1.1', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
+const CACHE = 'alp-fit-shell-v2.0-20261116';
+const SHELL = ['./', './index.html', './styles.css?v=2.0', './app.js?v=2.0', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });
@@ -9,6 +9,10 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin) return;
+  // Proje ayarı her zaman güncel alınır; cache'teki eski Supabase URL/key kullanılmasın.
+  if (new URL(request.url).pathname.endsWith('/config.js')) {
+    event.respondWith(fetch(request));return;
+  }
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).then(response => {
       if (response.ok) { const copy = response.clone(); caches.open(CACHE).then(c => c.put(request, copy)); }

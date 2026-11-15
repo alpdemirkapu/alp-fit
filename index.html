@@ -11,8 +11,8 @@
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
-  <link rel="stylesheet" href="./styles.css?v=1.1" />
-  <title>ALP FIT · Antrenman & Beslenme</title>
+  <link rel="stylesheet" href="./styles.css?v=2.0" />
+  <title>ALP FIT Cloud · Antrenman & Beslenme</title>
 </head>
 <body>
   <div class="shell">
@@ -21,7 +21,7 @@
         <span class="brand-mark">A<span class="brand-pip">•</span></span>
         <span class="brand-text">ALP <strong>FIT</strong><small>DAHA İYİSİNE DEVAM</small></span>
       </button>
-      <div class="header-right"><span id="today-chip" class="date-chip"></span><button class="icon-button" data-nav="settings" title="Ayarlar" aria-label="Ayarlar">⚙</button></div>
+      <div class="header-right"><span id="sync-status" class="sync-status" role="status" aria-live="polite"></span><span id="today-chip" class="date-chip"></span><button class="icon-button" data-nav="settings" title="Ayarlar" aria-label="Ayarlar">⚙</button></div>
     </header>
     <main id="app" aria-live="polite"></main>
     <nav class="bottom-nav" aria-label="Ana menü" id="bottom-nav"></nav>
@@ -35,6 +35,8 @@
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <input id="import-file" type="file" accept=".json,application/json" hidden />
-  <script src="./app.js?v=1.1" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="./config.js?v=2.0" defer></script>
+  <script src="./app.js?v=2.0" defer></script>
 </body>
 </html>

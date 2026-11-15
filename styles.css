@@ -74,3 +74,19 @@ input, select, textarea { font-size:16px; }
  .shell{padding-left:clamp(16px,4vw,32px);padding-right:clamp(16px,4vw,32px)}
 }
 @media (max-height:700px){.dialog{max-height:calc(100dvh - 16px - env(safe-area-inset-top,0px));}}
+
+
+/* ALP FIT Cloud 2.0 */
+.auth-wrap {max-width:530px;margin:0 auto;padding-top:clamp(10px,6vw,65px)}
+.auth-wrap .card{padding:22px}
+.sync-status{font-size:10px;font-weight:850;white-space:nowrap;max-width:138px;overflow:hidden;text-overflow:ellipsis}
+.sync-warning{background:#4b292c;border:1px solid #97565b;border-radius:13px;padding:12px;margin:16px 0;color:#ffe0df}
+.sync-warning p{font-size:12px;margin:9px 0}
+.code-share{background:#27362d;border-radius:12px;padding:13px;margin:16px 0}
+.code-share input{font-family:ui-monospace,Menlo,monospace;font-size:15px;letter-spacing:1px;text-align:center;font-weight:800;margin-bottom:9px}
+.share-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--line)}
+.share-row:last-child{border-bottom:0}
+.share-row .danger-button{min-height:36px;padding:8px 10px;flex-shrink:0}
+.share-row .small{min-width:0;overflow-wrap:anywhere}
+@media (max-width:435px){.date-chip{display:none}.sync-status{max-width:100px;font-size:9px}.topbar{gap:5px}.brand-text{font-size:16px}}
+@media (max-width:370px){.brand-text small{display:none}.sync-status{max-width:84px}}
