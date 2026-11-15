@@ -1,55 +1,40 @@
-# ALP FIT v1.0 · Ücretsiz iPhone antrenman + beslenme uygulaması
+# ALP FIT v1.1 · iPhone 16 Pro Max uyumlu sürüm
 
-Statik, dış servise bağlanmayan, tamamen ücretsiz **PWA**. Kodda reklam, analitik, sunucu veya üçüncü taraf kütüphane yok.
+## Neler değişti?
 
-## Özellikler
+- iPhone 16 Pro Max için Dynamic Island / üst durum çubuğu / alt gezinme güvenli alanları ayarlandı.
+- 3 yerine 5 düzenlenebilir antrenman günü var. Gün 1–3, kaydedilmiş hareketler ve geçmiş aynı kalır. Gün 4 ve 5 boş şablon olarak eklenir.
+- Kalori ve protein her gün için iki ayrı hedef kartında gösterilir. Öğün başlıklarında kalori **ve protein** alt toplamı vardır; besin satırlarında protein zaten gösteriliyordu.
+- **Ayarlar → Vücut analizim**: boy (cm), kilo (kg), yaş, hesaplamada kullanılan cinsiyet, aktivite seviyesi, hedef (yağ kaybı/koruma/kas kazanımı).
+- Form kaydedilince **VKİ**, **dinlenme enerji ihtiyacı (Mifflin–St Jeor)**, **tahmini günlük enerji ihtiyacı**, **hedef kalori ve protein** gösterilir.
+- **Önerilen hedefleri beslenmeye uygula** düğmesiyle rakamlar onay sonrası beslenme hedeflerine aktarılır. Kilo kaydında değişiklik olursa hesaplamanın yenilenmesi gerektiği belirtilir.
+- JSON yedek/geri yükleme önceki sürüm ile uyumludur. Veri anahtarı `alpfit-app-data-v1` ve yedek sürümü `1` değişmedi.
 
-- 3 düzenlenebilir antrenman günü; gün adı/odak alanı
-- Hareket oluşturma, set/tekrar ve başlangıç ağırlığı, dinlenme süresi
-- Gerçek set/ağırlık/tekrar kaydı; antrenman tamamlama; geçmiş
-- Dinlenme sayacı (ekran açık olduğu sürece)
-- Tarih bazlı beslenme kaydı, kalori/protein/karbonhidrat/yağ toplamları
-- Hazır 50 g yulaf + 50 g Nesquik gevrek + 200 ml az yağlı süt öğünü
-- Yumurta beyazı ve diğer besinler; özelleştirilebilir yeni besin
-- Kilo grafiği ve 14 günlük kalori grafiği
-- Günlük hedefleri kullanıcı girer (başlangıçta boş)
-- Tema rengi seçimi, JSON yedekleme ve geri yükleme
-- Service worker ile ziyaret edildikten sonra çevrimdışı açılabilme
+## Hesaplama varsayımları
 
-**Önemli:** Önceki antrenman programının tüm hareket/set listesi aktarılmadı; günler özellikle boş bırakıldı. Besin değerleri yaklaşık, ürün etiketlerini kontrol ediniz.
+- Mifflin–St Jeor (yetişkinler): **erkek** = `10×kg + 6.25×cm − 5×yaş + 5`, **kadın** = `10×kg + 6.25×cm − 5×yaş − 161`.
+- Aktivite katsayısı: düşük `1.2`; hafif `1.375`; orta `1.55`; yüksek `1.725`.
+- Enerji hedefi: yağ kaybında tahmini ihtiyacın `%85`i, korumada `%100`ü, kazanımda `%108`i. Kalori en yakın 10 kcal'a yuvarlanır.
+- Protein: yağ kaybında `2.0 g/kg`, korumada `1.6 g/kg`, kas kazanımında `1.8 g/kg`. En yakın 5 grama yuvarlanır.
+- İlk alanlarda **173 cm, 78 kg, 31 yaş** önceki kişisel bilgilerden örnek olarak yazılıdır; **değiştirilebilir**. Profil kaydedilmeden günlük hedefler kendiliğinden değişmez.
+- Tahmini değerlerdir; egzersiz yoğunluğu, vücut yağ oranı ve günlük hareketlilik sonucu değiştirir. VKİ kas kütlesini ayırmaz. Tıbbi tavsiye değildir.
 
-## Ücretsiz GitHub Pages kurulumu
+Kaynaklar: Mifflin MD ve ark., *American Journal of Clinical Nutrition* 1990, doi:10.1093/ajcn/51.2.241; Jäger ve ark., *J Int Soc Sports Nutr* 2017, doi:10.1186/s12970-017-0177-8.
 
-1. [github.com](https://github.com/) üzerinde ücretsiz hesap aç / giriş yap.
-2. `alp-fit` adlı **Public** repository oluştur. GitHub Free'de Pages kullanmak için repo public olmalı.
-3. Bu ZIP içindeki **bütün dosya ve klasörleri** (ZIP'in iç klasörünü değil; doğrudan `index.html`, `app.js`, `styles.css`, `sw.js`, `manifest.webmanifest`, `.nojekyll`, `icons/`) repository köküne yükle.
-4. Repository > **Settings > Pages**: Source `Deploy from a branch`, Branch `main`, Folder `/(root)`, **Save**.
-5. Yayın adresin genelde `https://KULLANICI_ADIN.github.io/alp-fit/` olur. GitHub'ın *Visit site* düğmesinden kesin adresi gör.
-6. iPhone Safari'de adresi aç. **Paylaş > Ana Ekrana Ekle > Web Uygulaması Olarak Aç > Ekle** yolunu izle.
-7. Bir kez çevrimiçi açtıktan sonra, uygulama dosyaları önbelleğe alındığında çevrimdışı çalışabilir.
+## Mevcut GitHub deposunu güncelleme (ikonları yeniden yüklemeye gerek yok)
 
-## Bilgisayarda ön izleme
+1. **ÖNCE** iPhone'daki ALP FIT → **Ayarlar → Yedek indir** ile özel JSON yedek al. Yedeği herkese açık GitHub deposuna yükleme.
+2. `alp-fit` depo sayfanda **Add file → Upload files** seç. ZIP'ten çıkardığın şu **beş** dosyayı repo **kök dizinine** yükle: `index.html`, `styles.css`, `app.js`, `sw.js`, `README.md`.
+3. **Commit changes** ile onayla. `icons/`, `.nojekyll`, `manifest.webmanifest` dosyaları değişmedi; bunlara dokunma.
+4. GitHub'da **Actions** veya **Settings → Pages** ekranından yayın işlemini kontrol et.
+5. iPhone'da ALP FIT'i **silmeden**, tamamen kapatıp tekrar aç. Gerekirse Pages adresini Safari'de bir kez açıp yeni dosyaların gelmesine izin ver, sonra ana ekran uygulamasını aç.
+6. **Ayarlar → Hakkında** bölümünde **ALP FIT v1.1** yazısını gör; birinci üç antrenman, beslenme ve kilo kayıtlarını kontrol et.
+7. **Ayarlar → Vücut analizim** bölümünden ölçülerini/hareket düzeyini kontrol et, **Hesapla** ve istersen **Hedefleri beslenmeye uygula**.
 
-Klasörde terminalden:
+> Uygulamayı iPhone'dan silme, site verilerini temizleme. Yerel depolama Safari sekmesiyle ana ekran PWA'sı arasında farklı olabilir. JSON yedeğini kişisel ve güvenli bir yerde tut.
 
-```bash
-python -m http.server 8080
-```
+## Sıfırdan kurulum
 
-Sonra `http://localhost:8080/` adresini aç. Sadece `index.html` dosyasına çift tıklarsan sayfa kısmen çalışabilir ama Service Worker / offline mod çalışmaz.
+Public GitHub deposunda tüm dosyalar kökte olmalı. **Settings → Pages → Deploy from a branch → main → /(root) → Save**; ardından `https://KULLANICIADIN.github.io/alp-fit/` adresini iPhone Safari'den aç, **Paylaş → Ana Ekrana Ekle**.
 
-## Gizlilik ve yedekleme
-
-- Uygulama verileri **yalnızca telefonundaki** tarayıcı/ana ekran web uygulamasının yerel depolamasında bulunur. Bulut senkronizasyonu veya kullanıcı hesabı yoktur.
-- GitHub'da herkese açık olan kısım uygulama *kodu*dur; kişisel kayıtlar GitHub'a aktarılmaz. Asla JSON yedeğini veya özel kişisel bilgileri public repository'ye yükleme.
-- iPhone'da Safari site verilerini silmek, web uygulamasını kaldırmak veya depolama temizliği kayıtları silebilir. **Ayarlar > Yedek indir** işlevini düzenli kullan. Yedek dosyasını özel, güvenli bir yere sakla.
-- PWA verilerinin Safari sekmesi ve ana ekran uygulamasında her iOS sürümünde aynı depolama alanını paylaşacağı varsayılmamalıdır. Kayıtları öncelikle ana ekrana eklediğin uygulamada yap.
-- Uygulama internet üzerinden HTTPS ile açılmalıdır; GitHub Pages bunu sağlar.
-
-## Güncelleme
-
-Yeni sürümü GitHub'daki aynı dosyaların üzerine yükleyip yayımlayabilirsin. Veriler aynı site adresi ve depolama alanı kaldığı sürece korunacak şekilde tasarlandı; yine de **güncellemeden önce yedek al.**
-
-## Lisans
-
-Kişisel kullanım için serbest. Buradaki kaynak dosyaları dilediğin gibi düzenleyebilirsin.
+Servis çalışanı yeni sürümde `alp-fit-shell-v1.1-20261116` önbelleğini kullanır. İnternetsiz kullanım önce çevrimiçi yükleme gerektirir.

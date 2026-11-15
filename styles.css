@@ -39,3 +39,38 @@ input,select,textarea { color:var(--text); background:#101716; border:1px solid 
 .toast{position:fixed;left:50%;bottom:calc(85px + var(--safe-bottom));transform:translateX(-50%) translateY(20px);background:#d4ffac;color:#142211;padding:12px 17px;border-radius:13px;z-index:120;font-weight:800;font-size:12px;max-width:min(90%,440px);opacity:0;pointer-events:none;transition:.2s;text-align:center}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}.timer-floating{position:fixed;left:50%;bottom:calc(88px + var(--safe-bottom));transform:translateX(-50%);background:#daf8aa;color:#132007;border:2px solid #95ca56;border-radius:17px;padding:12px 16px;z-index:40;box-shadow:0 15px 40px #0009;width:min(90%,390px)}.timer-floating[hidden]{display:none}.timer-floating button{color:#132007;font-weight:900;border:0;background:#bfdc8e;border-radius:10px;padding:7px 10px}
 @media(min-width:620px){.stats{grid-template-columns:repeat(4,1fr)}.quick-grid{grid-template-columns:repeat(4,1fr)}.dialog-backdrop{align-items:center;padding:18px}.dialog{border-radius:24px;max-height:88dvh}.hero-art{font-size:83px;flex-basis:130px}.set-head,.set-row{grid-template-columns:55px 1fr 1fr 70px}}
 @media(max-width:350px){.shell{padding-inline:12px}.hero{padding:16px}.hero-art{display:none}.date-chip{display:none}.stat{padding:13px}.card{padding:13px}}
+
+/* ALP FIT 1.1 · iPhone 16 Pro Max / Dynamic Island / yatay-dikey güvenli alan */
+html { -webkit-text-size-adjust:100%; }
+body { overscroll-behavior-y:contain; }
+.shell {
+  padding-top:calc(16px + env(safe-area-inset-top, 0px));
+  padding-left:max(16px, env(safe-area-inset-left, 0px));
+  padding-right:max(16px, env(safe-area-inset-right, 0px));
+}
+.topbar { min-height:44px; }
+.topbar .header-right { min-width:0; }
+main { min-width:0; }
+.stat, .card, .hero { overflow-wrap:anywhere; }
+.bottom-nav { padding-left:max(8px, env(safe-area-inset-left,0px));padding-right:max(8px, env(safe-area-inset-right,0px)); }
+.bottom-nav .nav-link { min-height:52px; }
+button, .icon-mini, .icon-button { -webkit-tap-highlight-color:transparent; }
+input, select, textarea { font-size:16px; }
+.analysis-grid {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:16px 0}
+.analysis-grid>div { background:var(--card2);border-radius:14px;padding:10px 8px;min-width:0; }
+.analysis-grid strong {display:block;font-size:20px;letter-spacing:-.7px;margin:6px 0}
+.analysis-grid span {display:block;line-height:1.4}
+.suggestion {background:var(--card2);border:1px solid #36463a;border-radius:17px;padding:14px 12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:16px 0}
+.suggestion>div {min-width:0}
+.suggestion .tiny {font-weight:800;color:var(--muted);letter-spacing:.5px;display:block;margin-bottom:6px}
+.suggestion strong {font-size:25px;line-height:1.25;display:block;letter-spacing:-.7px;color:var(--accent)}
+.suggestion strong small {font-size:12px;color:var(--muted);font-weight:500}
+@media(max-width:390px) {
+  .analysis-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .suggestion strong{font-size:22px}
+  .bottom-nav .nav-link{font-size:9px}
+}
+@media(min-width:620px){
+ .shell{padding-left:clamp(16px,4vw,32px);padding-right:clamp(16px,4vw,32px)}
+}
+@media (max-height:700px){.dialog{max-height:calc(100dvh - 16px - env(safe-area-inset-top,0px));}}

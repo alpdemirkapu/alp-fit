@@ -1,7 +1,8 @@
 'use strict';
 (() => {
   const STORE_KEY = 'alpfit-app-data-v1';
-  const APP_VERSION = 1;
+  const APP_VERSION = 1; // Yerel veri şeması v1 kalır: mevcut kayıtlar silinmez.
+  const APP_LABEL = '1.1';
   const $ = (selector) => document.querySelector(selector);
   const app = $('#app');
   const today = () => {
@@ -16,12 +17,23 @@
   const dateLabel = date => new Date(date+'T12:00:00').toLocaleDateString('tr-TR',{day:'numeric',month:'long',weekday:'long'});
   const dateShort = date => new Date(date+'T12:00:00').toLocaleDateString('tr-TR',{day:'numeric',month:'short'});
   const offsetDate = (date, delta) => {const d = new Date(date+'T12:00:00'); d.setDate(d.getDate()+delta);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
-  const emptyData = () => ({version:APP_VERSION,accent:'lime',goals:{calories:null,protein:null},days:[
-    {id:'day1',name:'1. Gün',focus:'Hareketleri ekle',exercises:[]},
-    {id:'day2',name:'2. Gün',focus:'Hareketleri ekle',exercises:[]},
-    {id:'day3',name:'3. Gün',focus:'Hareketleri ekle',exercises:[]}
-  ],workoutLogs:{},foodLogs:{},customFoods:[],weightLogs:{}});
-  function load() { try {const obj=JSON.parse(localStorage.getItem(STORE_KEY));if(obj && obj.version===APP_VERSION && Array.isArray(obj.days) && obj.workoutLogs && obj.foodLogs && obj.goals) return obj;}catch(e){} return emptyData(); }
+  // Mevcut v1 kayıt anahtarı değişmiyor; sürüm yükseltme yalnızca eksik alanları ekler.
+  const initialProfile = () => ({heightCm:173,weightKg:78,age:31,sex:'male',activity:'moderate',goal:'lose',confirmed:false});
+  const initialDay = n => ({id:`day${n}`,name:`${n}. Gün`,focus:'Hareketleri ekle',exercises:[]});
+  const emptyData = () => ({version:APP_VERSION,accent:'lime',goals:{calories:null,protein:null},
+    days:[1,2,3,4,5].map(initialDay),workoutLogs:{},foodLogs:{},customFoods:[],weightLogs:{},profile:initialProfile()});
+  function normalizeData(d){
+    if(!d || d.version!==APP_VERSION || !Array.isArray(d.days) || !d.workoutLogs || !d.foodLogs || !d.goals) return emptyData();
+    d.profile={...initialProfile(),...(d.profile||{})};
+    d.days=d.days.filter(day=>day && typeof day==='object');
+    // İlk üç günün adları, hareketleri, setleri ve log ID'leri aynen korunur.
+    for(let n=d.days.length+1;n<=5;n++) d.days.push(initialDay(n));
+    if(!d.weightLogs || typeof d.weightLogs!=='object') d.weightLogs={};
+    if(!Array.isArray(d.customFoods)) d.customFoods=[];
+    if(!['lime','blue','orange'].includes(d.accent))d.accent='lime';
+    return d;
+  }
+  function load(){try{return normalizeData(JSON.parse(localStorage.getItem(STORE_KEY)));}catch(e){return emptyData();}}
   let data=load();
   let view='home', selectedDate=today(), selectedDayId=data.days[0]?.id || 'day1', timerUntil=0, timerSeconds=0, toastTimeout=0;
   const foodLibrary = [
@@ -50,9 +62,27 @@
   function sessionStats(day,date=selectedDate){const log=getSession(day.id,date);const total=day.exercises.reduce((n,ex)=>n+number(ex.sets),0);const done=day.exercises.reduce((n,ex)=>n+Array.from({length:number(ex.sets)},(_,i)=>log.sets?.[ex.id+'-'+i]?.done?1:0).reduce((a,b)=>a+b,0),0);return {done,total,completed:!!log.completedAt};}
   const pct = (val,target) => target>0?Math.max(0,Math.min(100,Math.round(val/target*100))):0;
   function sectionTitle(text, extra=''){return `<div class="section-title"><h2>${text}</h2>${extra}</div>`;}
-  function goalsSummary(){const totals=nutritionTotals();const cals=data.goals.calories,p=data.goals.protein;return `<div class="stats">
-    <div class="stat"><div class="lbl">Günlük kalori</div><div class="num">${fmt(totals.kcal)} <small>kcal</small></div><div class="sub">${cals ? `Hedef ${fmt(cals)} kcal`:'Hedef belirlenmedi'}</div><div class="progress"><span style="width:${pct(totals.kcal,cals)}%"></span></div></div>
-    <div class="stat"><div class="lbl">Günlük protein</div><div class="num">${fmt(totals.p,1)} <small>g</small></div><div class="sub">${p ? `Hedef ${fmt(p)} g`:'Hedef belirlenmedi'}</div><div class="progress"><span style="width:${pct(totals.p,p)}%"></span></div></div>
+  function bodyEstimate(profile=data.profile){
+    const h=number(profile.heightCm), w=number(profile.weightKg), age=number(profile.age);
+    if(!(h>=130&&h<=220&&w>=30&&w<=250&&age>=18&&age<=90&&['male','female'].includes(profile.sex))) return null;
+    const activityFactors={sedentary:1.2,light:1.375,moderate:1.55,high:1.725};
+    const factor=activityFactors[profile.activity]||1.375;
+    const rmr=10*w+6.25*h-5*age+(profile.sex==='male'?5:-161);
+    const tdee=rmr*factor;
+    const g=['lose','maintain','gain'].includes(profile.goal)?profile.goal:'maintain';
+    const energyFactor={lose:.85,maintain:1,gain:1.08}[g];
+    const proteinFactor={lose:2,maintain:1.6,gain:1.8}[g];
+    return {bmi:w/((h/100)**2),rmr:Math.round(rmr),tdee:Math.round(tdee),
+      calories:Math.round(tdee*energyFactor/10)*10,
+      protein:Math.round(w*proteinFactor/5)*5,goal:g,proteinFactor};
+  }
+  function currentBmiInfo(){const x=bodyEstimate();return x?`<span class="pill muted-pill">VKİ ${fmt(x.bmi,1)}</span>`:'';}
+  function goalsSummary(){const totals=nutritionTotals();const cals=data.goals.calories,p=data.goals.protein;
+    const diffC=cals>0?(cals>=totals.kcal?`${fmt(cals-totals.kcal)} kcal kaldı`:`${fmt(totals.kcal-cals)} kcal üstünde`):'Hedef henüz ayarlanmadı';
+    const diffP=p>0?(p>=totals.p?`${fmt(p-totals.p,1)} g kaldı`:`${fmt(totals.p-p,1)} g üstünde`):'Hedef henüz ayarlanmadı';
+    return `<div class="stats">
+    <div class="stat"><div class="lbl">🔥 Günlük kalori</div><div class="num">${fmt(totals.kcal)} <small>kcal</small></div><div class="sub">${cals ? `Hedef ${fmt(cals)} kcal · ${diffC}`:diffC}</div><div class="progress"><span style="width:${pct(totals.kcal,cals)}%"></span></div></div>
+    <div class="stat"><div class="lbl">💪 Günlük protein</div><div class="num">${fmt(totals.p,1)} <small>g</small></div><div class="sub">${p ? `Hedef ${fmt(p)} g · ${diffP}`:diffP}</div><div class="progress"><span style="width:${pct(totals.p,p)}%"></span></div></div>
   </div>`;}
   function dateNav(){return `<div class="date-nav"><button class="mini-btn" data-action="prev-date" aria-label="Önceki gün">‹</button><input type="date" id="date-select" value="${esc(selectedDate)}" aria-label="Takip edilen tarih"><button class="mini-btn" data-action="next-date" aria-label="Sonraki gün">›</button><button class="mini-btn" data-action="today" title="Bugün" aria-label="Bugün">●</button></div>`;}
   function renderHome(){
@@ -78,7 +108,7 @@
       <div class="card"><div class="between"><div><div class="eyebrow">SEÇİLİ GÜN</div><h2>${esc(day.name)}</h2><p class="hint">${esc(day.focus)}</p></div><button class="icon-mini" data-action="edit-day" title="Günü düzenle" aria-label="Günü düzenle">✎</button></div>
       <div class="kpi-list"><span class="pill">${day.exercises.length} hareket</span><span class="pill">${stats.done} / ${stats.total} set</span>${sess.completedAt?'<span class="pill">✓ Tamamlandı</span>':''}</div><div class="progress"><span style="width:${pct(stats.done,stats.total)}%"></span></div></div>
       ${sectionTitle('Hareketler',`<button class="secondary" data-action="add-exercise">+ Hareket ekle</button>`)}
-      ${day.exercises.length?day.exercises.map((ex,k)=>renderExercise(ex,k,sess)).join(''):`<div class="empty"><div class="emoji">🏋️</div><strong>Bu gün henüz boş</strong><p>Önce konuştuğumuz programın ayrıntıları burada mevcut değil. Hareketlerini ekleyerek gerçek programını oluşturabilirsin.</p><button class="primary" data-action="add-exercise">+ İlk hareketi ekle</button></div>`}
+      ${day.exercises.length?day.exercises.map((ex,k)=>renderExercise(ex,k,sess)).join(''):`<div class="empty"><div class="emoji">🏋️</div><strong>Bu günün hareketleri henüz eklenmedi</strong><p>Önce konuştuğumuz programın ayrıntıları burada mevcut değil. Hareketlerini ekleyerek gerçek programını oluşturabilirsin.</p><button class="primary" data-action="add-exercise">+ İlk hareketi ekle</button></div>`}
       ${day.exercises.length?`<div class="button-row"><button class="primary" data-action="complete-session">${sess.completedAt?'✓ Tamamlandı · Tekrar kaydet':'✓ Antrenmanı tamamla'}</button></div>`:''}
       <p class="hint" style="margin-top:16px">Setleri işaretlediğinde kayıt otomatik saklanır. Ağırlık ve tekrar alanlarını da değiştirebilirsin. ${sess.completedAt?'Tamamlanan seansı değiştirebilirsin.':''}</p>`;
   }
@@ -97,8 +127,8 @@
       ${sectionTitle('Hızlı ekle')}<div class="card"><div class="between" style="align-items:flex-start"><div class="grow"><h3>🥣 Alıştığım kahvaltı</h3><p class="hint">50 g yulaf + 50 g Nesquik gevrek + 200 ml az yağlı süt</p><p class="hint">Yumurta beyazını ayrıca ekleyebilirsin.</p></div><button class="primary" data-action="favorite-breakfast">+ Ekle</button></div></div>
       <div class="button-row"><button class="primary" data-action="open-food">+ Besin ekle</button><button class="secondary" data-action="custom-food">+ Yeni besin tanımla</button></div>
       ${meals.map(meal=>{
-         const list=items.filter(item=>item.meal===meal);const subtotal=list.reduce((n,it)=>n+number(it.kcal)*number(it.amount)/number(it.base,100),0);
-         return `${sectionTitle(esc(meal),`<span class="small muted">${fmt(subtotal)} kcal</span>`)}<div class="card">${list.length?list.map(item=>foodRow(item)).join(''):`<div class="small muted">Bu öğünde henüz kayıt yok.</div>`}</div>`;
+         const list=items.filter(item=>item.meal===meal);const subtotal=list.reduce((a,it)=>{const n=number(it.amount)/number(it.base,100);a.kcal+=number(it.kcal)*n;a.p+=number(it.p)*n;return a;},{kcal:0,p:0});
+         return `${sectionTitle(esc(meal),`<span class="small muted">${fmt(subtotal.kcal)} kcal · ${fmt(subtotal.p,1)} g protein</span>`)}<div class="card">${list.length?list.map(item=>foodRow(item)).join(''):`<div class="small muted">Bu öğünde henüz kayıt yok.</div>`}</div>`;
       }).join('')}
       <p class="hint">Besin değerleri ürün, marka ve pişirme şekline göre değişir. Paket üzerindeki değerleri temel alarak kendi besinini tanımlayabilirsin.</p>`;
   }
@@ -113,7 +143,7 @@
     const totalSets=allSessions.reduce((a,s)=>a+Object.values(s.sets||{}).filter(x=>x.done).length,0);
     app.innerHTML=`<p class="eyebrow">İLERLEME TABLOSU</p><h1>Gelişimim</h1><p class="lead">Kaydettiğin verilerle ilerlemeni takip et.</p><div class="stats"><div class="stat"><div class="lbl">Bitirilen antrenman</div><div class="num">${allSessions.length}</div></div><div class="stat"><div class="lbl">Tamamlanan set</div><div class="num">${totalSets}</div></div></div>
        ${sectionTitle('Vücut ağırlığı',`<button class="secondary" data-action="add-weight">+ Kilo kaydet</button>`)}
-       <div class="card">${weightEntries.length?weightChart(weightEntries.slice(-15)):'<div class="empty" style="margin:0"><div class="emoji">⚖️</div><strong>Henüz kilo kaydı yok</strong><p>Ölçüm eklediğinde değişimi grafik üzerinde göreceksin.</p></div>'}${weightEntries.length?`<div class="between"><span class="small muted">Son ölçüm: ${esc(dateShort(weightEntries.at(-1)[0]))}</span><strong>${fmt(weightEntries.at(-1)[1],1)} kg</strong></div>`:''}</div>
+       <div class="card"><div class="kpi-list" style="margin-top:0;margin-bottom:12px">${currentBmiInfo()}<button class="ghost" data-nav="settings" style="min-height:32px;padding:5px 10px">Boy / hedef hesabı →</button></div>${weightEntries.length?weightChart(weightEntries.slice(-15)):'<div class="empty" style="margin:0"><div class="emoji">⚖️</div><strong>Henüz kilo kaydı yok</strong><p>Ölçüm eklediğinde değişimi grafik üzerinde göreceksin.</p></div>'}${weightEntries.length?`<div class="between"><span class="small muted">Son ölçüm: ${esc(dateShort(weightEntries.at(-1)[0]))}</span><strong>${fmt(weightEntries.at(-1)[1],1)} kg</strong></div>`:''}</div>
        ${sectionTitle('Son 14 gün · Kalori')}<div class="card"><div class="bars">${bars}</div><p class="chart-note">Çubuklar kaydettiğin öğünlerin toplamını gösterir; boş günler sıfırdır.</p></div>
        ${sectionTitle('Antrenman geçmişi')}<div class="card">${allSessions.length?allSessions.slice(0,20).map(log=>{const day=data.days.find(d=>d.id===log.dayId);const done=Object.values(log.sets||{}).filter(x=>x.done).length;return `<div class="food-item"><div class="food-icon">✓</div><div class="grow"><div class="food-name">${esc(day?.name||'Silinmiş gün')}</div><div class="food-desc">${esc(dateShort(log.date))} · ${done} set</div></div><span class="pill">Bitti</span></div>`;}).join(''):'<p class="small muted" style="margin:0">Henüz tamamlanan antrenman yok.</p>'}</div>`;
   }
@@ -124,11 +154,30 @@
     return `<svg class="weight-svg" viewBox="0 0 ${width} ${height+14}" role="img" aria-label="Vücut ağırlığı gelişim grafiği"><line x1="18" y1="${height-pad}" x2="312" y2="${height-pad}" stroke="#485950"/><polyline fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${pts.map(p=>`${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')}"/>${pts.map(p=>`<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="4" fill="var(--accent)"/>`).join('')}<text x="18" y="${height+9}" fill="#92a29e" font-size="10">${esc(dateShort(entries[0][0]))}</text><text x="312" y="${height+9}" fill="#92a29e" font-size="10" text-anchor="end">${esc(dateShort(entries.at(-1)[0]))}</text></svg>`;
   }
   function renderSettings(){
-    app.innerHTML=`<p class="eyebrow">KİŞİSELLEŞTİRME</p><h1>Ayarlar</h1><p class="lead">Hedefler, görünüm ve verilerin kontrolü sende.</p>
-      ${sectionTitle('Günlük hedefler')}<div class="card"><form data-form="goals"><div class="two-cols"><div class="field"><label for="goal-calories">Kalori (kcal)</label><input id="goal-calories" name="calories" type="number" inputmode="numeric" min="0" max="10000" placeholder="Henüz belirlenmedi" value="${data.goals.calories??''}"></div><div class="field"><label for="goal-protein">Protein (g)</label><input id="goal-protein" name="protein" type="number" inputmode="decimal" min="0" max="1000" step="0.1" placeholder="Henüz belirlenmedi" value="${data.goals.protein??''}"></div></div><button type="submit" class="primary wide">Hedefleri kaydet</button><p class="hint">Hedeflerini otomatik hesaplamıyoruz; istediğin zaman sen belirleyebilirsin.</p></form></div>
+    const p=data.profile||initialProfile(), estimate=p.confirmed?bodyEstimate(p):null;
+    const goalNames={lose:'Yağ kaybı / kilo verme',maintain:'Kiloyu koruma',gain:'Kas kazanımı'};
+    const goalDesc={lose:'Günlük enerji ihtiyacından yaklaşık %15 düşük',maintain:'Tahmini günlük enerji ihtiyacı kadar',gain:'Günlük enerji ihtiyacından yaklaşık %8 yüksek'};
+    app.innerHTML=`<p class="eyebrow">KİŞİSELLEŞTİRME</p><h1>Ayarlar</h1><p class="lead">Vücut ölçülerine ve hedefine göre kalori ile protein ihtiyacını tahmin et.</p>
+      ${sectionTitle('Vücut analizim')}<div class="card"><form data-form="body-profile">
+      <div class="two-cols"><div class="field"><label for="profile-height">Boy (cm)</label><input id="profile-height" name="height" type="number" inputmode="decimal" min="130" max="220" step="0.1" required value="${esc(p.heightCm)}"></div><div class="field"><label for="profile-weight">Kilo (kg)</label><input id="profile-weight" name="weight" type="number" inputmode="decimal" min="30" max="250" step="0.1" required value="${esc(p.weightKg)}"></div></div>
+      <div class="two-cols"><div class="field"><label for="profile-age">Yaş</label><input id="profile-age" name="age" type="number" min="18" max="90" step="1" inputmode="numeric" required value="${esc(p.age)}"></div><div class="field"><label for="profile-sex">Hesaplamada kullanılan cinsiyet</label><select id="profile-sex" name="sex"><option value="male" ${p.sex==='male'?'selected':''}>Erkek</option><option value="female" ${p.sex==='female'?'selected':''}>Kadın</option></select></div></div>
+      <div class="field"><label for="profile-activity">Günlük hareketlilik düzeyi</label><select id="profile-activity" name="activity">
+      <option value="sedentary" ${p.activity==='sedentary'?'selected':''}>Düşük · çoğunlukla oturuyorum</option>
+      <option value="light" ${p.activity==='light'?'selected':''}>Hafif · gün içinde biraz hareket</option>
+      <option value="moderate" ${p.activity==='moderate'?'selected':''}>Orta · hareketli yaşam + düzenli spor</option>
+      <option value="high" ${p.activity==='high'?'selected':''}>Yüksek · çok hareketli yaşam / yoğun spor</option></select><p class="hint">Haftada 5 antrenman yapmak tek başına yüksek aktivite anlamına gelmez; gün boyu hareketini de hesaba kat.</p></div>
+      <div class="field"><label for="profile-goal">Hedefim</label><select id="profile-goal" name="goal"><option value="lose" ${p.goal==='lose'?'selected':''}>Yağ kaybı / kilo verme</option><option value="maintain" ${p.goal==='maintain'?'selected':''}>Kilomu koruma</option><option value="gain" ${p.goal==='gain'?'selected':''}>Kas kazanımı</option></select></div>
+      <button type="submit" class="primary wide">📐 Boy-kilo analizimi hesapla</button><p class="hint">Başlangıçtaki 173 cm, 78 kg ve 31 yaş değerleri önceden konuştuğumuz bilgilerdir; istersen değiştir.</p></form></div>
+      ${estimate?`<div class="card analysis-results"><div class="between"><h3>Hedefine göre tahmini sonuç</h3><span class="pill">${esc(goalNames[estimate.goal])}</span></div>
+      <div class="analysis-grid"><div><span class="small muted">Vücut kitle indeksi</span><strong>${fmt(estimate.bmi,1)}</strong><span class="tiny muted">kg/m² (kas oranını göstermez)</span></div><div><span class="small muted">Dinlenme enerjisi</span><strong>${fmt(estimate.rmr)}</strong><span class="tiny muted">kcal/gün</span></div><div><span class="small muted">Tahmini günlük ihtiyaç</span><strong>${fmt(estimate.tdee)}</strong><span class="tiny muted">kcal/gün</span></div></div>
+      <p class="hint">${goalDesc[estimate.goal]}. Protein hesabı: ${fmt(estimate.proteinFactor,1)} g/kg.</p>
+      <div class="suggestion"><div><span class="tiny">GÜNLÜK KALORİ</span><strong>${fmt(estimate.calories)} <small>kcal</small></strong></div><div><span class="tiny">GÜNLÜK PROTEİN</span><strong>${fmt(estimate.protein)} <small>g</small></strong></div></div>
+      <button class="primary wide" data-action="apply-estimate">✓ Önerilen hedefleri beslenmeye uygula</button>
+      <p class="hint">Hesaplama mevcut günlük hedeflerini otomatik değiştirmez. Bu butona basarsan uygular. Kilo veya aktivite değişiminde yeniden hesaplayabilirsin.</p></div>`:`<div class="card soft"><p class="small" style="margin:0">Boy, kilo, yaş ve hedef bilgilerini kontrol edip <strong>Hesapla</strong> tuşuna bas. Sonucu onayladıktan sonra beslenme ekranına aktarabilirsin.</p></div>`}
+      ${sectionTitle('Günlük hedefler · elle düzenle')}<div class="card"><form data-form="goals"><div class="two-cols"><div class="field"><label for="goal-calories">Kalori (kcal)</label><input id="goal-calories" name="calories" type="number" inputmode="numeric" min="0" max="10000" placeholder="Henüz belirlenmedi" value="${data.goals.calories??''}"></div><div class="field"><label for="goal-protein">Protein (g)</label><input id="goal-protein" name="protein" type="number" inputmode="decimal" min="0" max="1000" step="0.1" placeholder="Henüz belirlenmedi" value="${data.goals.protein??''}"></div></div><button type="submit" class="secondary wide">Hedefleri elle kaydet</button><p class="hint">Otomatik önerileri kullanmak istemiyorsan kalori ve protein hedeflerini kendin girebilirsin.</p></form></div>
       ${sectionTitle('Tema rengi')}<div class="card"><div class="color-choice">${[['lime','#b8fb5b','Yeşil'],['blue','#8edcff','Mavi'],['orange','#ffc17f','Turuncu']].map(([id,color,name])=>`<button data-action="accent" data-id="${id}" class="${data.accent===id?'selected':''}"><span class="swatch" style="background:${color}"></span>${name}</button>`).join('')}</div></div>
-      ${sectionTitle('Veri yedekleme')}<div class="card"><h3>📦 Kayıtların sende kalsın</h3><p class="hint" style="margin-bottom:16px">Tüm kayıtlar bu cihazın tarayıcı depolamasındadır. Telefon değiştirirken, uygulamayı silmeden önce JSON yedeği al.</p><div class="button-row"><button class="primary" data-action="export">↓ Yedek indir</button><button class="secondary" data-action="import">↑ Yedek yükle</button></div></div>
-      ${sectionTitle('Hakkında')}<div class="card"><h3>ALP FIT v1.0</h3><p class="hint">Ücretsiz, reklamsız, çevrimdışı çalışabilen kişisel web uygulaması. Hesap veya bulut senkronizasyonu yoktur. Başka cihazdaki kayıtlar otomatik gelmez.</p><p class="hint">Besin değerleri tahminidir, tıbbi ya da diyetetik tavsiye değildir.</p></div>
+      ${sectionTitle('Veri yedekleme')}<div class="card"><h3>📦 Kayıtların sende kalsın</h3><p class="hint" style="margin-bottom:16px">Kayıtlar bu cihazın yerel depolamasındadır. Güncellemeden veya telefon değiştirmeden önce JSON yedeğini özel bir alana indir.</p><div class="button-row"><button class="primary" data-action="export">↓ Yedek indir</button><button class="secondary" data-action="import">↑ Yedek yükle</button></div></div>
+      ${sectionTitle('Hakkında')}<div class="card"><h3>ALP FIT v${APP_LABEL}</h3><p class="hint">Ücretsiz, reklamsız, çevrimdışı çalışabilen kişisel web uygulaması. Hesap veya bulut senkronizasyonu yoktur. Başka cihazdaki kayıtlar otomatik gelmez.</p><p class="hint">Besin değerleri yaklaşık tahminidir. Kalori hesabı Mifflin–St Jeor formülü ve aktivite katsayısı kullanır; bireysel ihtiyaçtan farklı olabilir. Protein miktarı sağlıklı, direnç egzersizi yapan yetişkinler için genel hedef niteliğindedir. VKİ kas/yağ ayrımı yapmaz. Tıbbi öneri yerine geçmez.</p></div>
       <div class="card"><h3 style="color:var(--danger)">Tehlikeli bölge</h3><p class="hint" style="margin-bottom:12px">Sıfırlamak tüm antrenman, yemek ve kilo kayıtlarını bu cihazdan siler. Önce yedek al.</p><button class="danger-button" data-action="reset">Tüm verileri sıfırla</button></div>`;
   }
   function render(){
@@ -186,7 +235,7 @@
     d.accent=['lime','blue','orange'].includes(d.accent)?d.accent:'lime';return d;
   }
   async function importBackup(file){if(!file)return;if(file.size>2_000_000){toast('Dosya çok büyük (maksimum 2 MB).');return;}
-    try{const parsed=JSON.parse(await file.text());const next=validBackup(parsed);if(!confirm('Bu yedek, şu anki bütün kayıtlarının üzerine yazacak. Devam edilsin mi?'))return;data=next;selectedDayId=data.days[0].id;save();render();toast('Yedek yüklendi.');}catch(e){toast('Yedek açılamadı: '+e.message);}finally{$('#import-file').value='';}
+    try{const parsed=JSON.parse(await file.text());const next=validBackup(parsed);if(!confirm('Bu yedek, şu anki bütün kayıtlarının üzerine yazacak. Devam edilsin mi?'))return;data=normalizeData(next);selectedDayId=data.days[0].id;save();render();toast('Yedek yüklendi.');}catch(e){toast('Yedek açılamadı: '+e.message);}finally{$('#import-file').value='';}
   }
   document.addEventListener('click',e=>{
     if(e.target.id==='dialog-backdrop') {closeDialog();return;}
@@ -219,6 +268,7 @@
       case 'edit-food-entry':foodForm(getFoods().find(it=>it.id===id));break;
       case 'delete-food-entry':if(confirm('Bu öğün kaydı silinsin mi?')){data.foodLogs[selectedDate]=getFoods().filter(it=>it.id!==id);save();render();toast('Kayıt silindi.');}break;
       case 'add-weight':weightForm();break;
+      case 'apply-estimate':{const estimate=bodyEstimate();if(!estimate || !data.profile.confirmed){toast('Önce vücut analizini hesapla.');break;}data.goals={calories:estimate.calories,protein:estimate.protein};save();render();toast('Kalori ve protein hedeflerin güncellendi!');break;}
       case 'accent':data.accent=id;save();render();toast('Tema güncellendi.');break;
       case 'export':exportBackup();break;
       case 'import':$('#import-file').click();break;
@@ -233,6 +283,15 @@
   document.addEventListener('submit',e=>{
     const form=e.target.closest('form[data-form]');if(!form)return;e.preventDefault();const fd=new FormData(form);const val=name=>String(fd.get(name)??'').trim();
     switch(form.dataset.form){
+      case 'body-profile':{
+        const profile={heightCm:number(val('height')),weightKg:number(val('weight')),age:number(val('age')),
+          sex:val('sex'),activity:val('activity'),goal:val('goal'),confirmed:true};
+        if(!bodyEstimate(profile) || !['sedentary','light','moderate','high'].includes(profile.activity) || !['lose','maintain','gain'].includes(profile.goal)){
+          toast('Boy, kilo, yaş ve aktivite bilgilerini kontrol et.');return;
+        }
+        data.profile=profile;save();render();toast('Analizin hesaplandı. Hedefi uygulamak için aşağıdaki butona bas.');
+        break;
+      }
       case 'goals': data.goals={calories:val('calories')?Math.max(0,number(val('calories'))):null,protein:val('protein')?Math.max(0,number(val('protein'))):null};save();render();toast('Hedefler kaydedildi.');break;
       case 'edit-day':{const day=getDay();day.name=val('name');day.focus=val('focus')||'Kişisel program';save();closeDialog();render();toast('Gün güncellendi.');break;}
       case 'exercise':{
@@ -255,12 +314,13 @@
       }
       case 'weight':{
         const date=val('date'),weight=number(val('weight'));if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||weight<20||weight>400){toast('Geçerli tarih ve kilo gir.');return;}
-        data.weightLogs[date]=weight;save();closeDialog();render();toast('Kilo kaydı eklendi.');break;
+        data.weightLogs[date]=weight;const dates=Object.keys(data.weightLogs).sort();if(dates.at(-1)===date){data.profile.weightKg=weight;data.profile.confirmed=false;}save();closeDialog();render();toast('Kilo kaydı eklendi. Güncel hedef için analizi yeniden hesapla.');break;
       }
     }
   });
   $('#import-file').addEventListener('change',e=>importBackup(e.target.files?.[0]));
   document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDialog();});
   if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(()=>{});
+  save(); // Eksik gün/profil alanlarını ekleyerek eski kaydı aynı anahtarda güncelle.
   render();
 })();
