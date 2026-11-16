@@ -1,5 +1,5 @@
-const CACHE = 'alp-fit-shell-v2.0-20261116';
-const SHELL = ['./', './index.html', './styles.css?v=2.0', './app.js?v=2.0', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
+const CACHE = 'alp-fit-shell-v2.1-20261116';
+const SHELL = ['./', './index.html', './styles.css?v=2.1', './importer.js?v=2.1', './app.js?v=2.1', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)).then(() => self.skipWaiting()));
 });

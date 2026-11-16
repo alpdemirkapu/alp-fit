@@ -4,7 +4,7 @@
   const V2_CACHE_PREFIX = 'alpfit-v2-cache-';
   const V2_DIRTY_PREFIX = 'alpfit-v2-pending-';
   const APP_VERSION = 1; // Yerel veri şeması v1 kalır: mevcut kayıtlar silinmez.
-  const APP_LABEL = '2.0';
+  const APP_LABEL = '2.1';
   const $ = (selector) => document.querySelector(selector);
   const app = $('#app');
   const today = () => {
@@ -22,14 +22,19 @@
   // Mevcut v1 kayıt anahtarı değişmiyor; sürüm yükseltme yalnızca eksik alanları ekler.
   const initialProfile = () => ({heightCm:'',weightKg:'',age:'',sex:'',activity:'moderate',goal:'maintain',confirmed:false});
   const initialDay = n => ({id:`day${n}`,name:`${n}. Gün`,focus:'Hareketleri ekle',exercises:[]});
+  const ensureSevenDays = days => {
+    // İlk 5 günün ve diğer tüm mevcut kayıtların ID'leri değiştirilmez.
+    const output = Array.isArray(days) ? days.filter(day=>day&&typeof day==='object') : [];
+    for(let n=output.length+1;n<=7;n++)output.push(initialDay(n));
+    return output;
+  };
   const emptyData = () => ({version:APP_VERSION,accent:'lime',goals:{calories:null,protein:null},
-    days:[1,2,3,4,5].map(initialDay),workoutLogs:{},foodLogs:{},customFoods:[],weightLogs:{},profile:initialProfile()});
+    days:[1,2,3,4,5,6,7].map(initialDay),workoutLogs:{},foodLogs:{},customFoods:[],weightLogs:{},profile:initialProfile()});
   function normalizeData(d){
     if(!d || d.version!==APP_VERSION || !Array.isArray(d.days) || !d.workoutLogs || !d.foodLogs || !d.goals) return emptyData();
     d.profile={...initialProfile(),...(d.profile||{})};
-    d.days=d.days.filter(day=>day && typeof day==='object');
-    // İlk üç günün adları, hareketleri, setleri ve log ID'leri aynen korunur.
-    for(let n=d.days.length+1;n<=5;n++) d.days.push(initialDay(n));
+    d.days=ensureSevenDays(d.days);
+    // Önceki 5 gün ve log ID'leri aynen korunur; yalnızca eksik günler eklenir.
     if(!d.weightLogs || typeof d.weightLogs!=='object') d.weightLogs={};
     if(!Array.isArray(d.customFoods)) d.customFoods=[];
     if(!['lime','blue','orange'].includes(d.accent))d.accent='lime';
@@ -63,6 +68,7 @@
   let currentUser=null, cloudRevision=0, syncTimer=0, syncRunning=false, dirtyCounter=0, savedCounter=0,
       syncBlocked=false, syncMessage='', loginLoading=false, userLoadPromise=null;
   let outgoingShares=[], incomingShares=[], inviteCode='', activeOwner='', sharedDays=[], sharedRevision=0;
+  let pendingWorkoutImport=null;
   const cacheKey=()=>V2_CACHE_PREFIX+currentUser?.id;
   const pendingKey=()=>V2_DIRTY_PREFIX+currentUser?.id;
   function save(){
@@ -161,7 +167,7 @@
   }
   function renderWorkout(){
     const day=getDay(), sess=getSession(), stats=sessionStats(day);
-    app.innerHTML=`<p class="eyebrow">ANTRENMAN TAKİBİ</p><h1>Programım</h1><p class="lead">Hareketlerini düzenle; her setin ağırlığını ve tekrarını kaydet.</p><div class="button-row" style="margin-bottom:14px"><button class="secondary" data-nav="shared">💑 Ortak program düzenleyici</button></div>${dateNav()}
+    app.innerHTML=`<p class="eyebrow">ANTRENMAN TAKİBİ</p><h1>Programım</h1><p class="lead">7 ayrı programını düzenle; sabah ve akşam antrenmanlarına farklı isim verebilirsin.</p><div class="button-row" style="margin-bottom:14px"><button class="secondary" data-action="open-program-import">📋 Metin / TXT ile program aktar</button><button class="secondary" data-nav="shared">💑 Ortak program düzenleyici</button></div>${dateNav()}
       <div class="chips">${data.days.map((d,i)=>`<button class="${d.id===day.id?'active':''}" data-action="select-day" data-id="${esc(d.id)}">${esc(d.name)}</button>`).join('')}</div>
       <div class="card"><div class="between"><div><div class="eyebrow">SEÇİLİ GÜN</div><h2>${esc(day.name)}</h2><p class="hint">${esc(day.focus)}</p></div><button class="icon-mini" data-action="edit-day" title="Günü düzenle" aria-label="Günü düzenle">✎</button></div>
       <div class="kpi-list"><span class="pill">${day.exercises.length} hareket</span><span class="pill">${stats.done} / ${stats.total} set</span>${sess.completedAt?'<span class="pill">✓ Tamamlandı</span>':''}</div><div class="progress"><span style="width:${pct(stats.done,stats.total)}%"></span></div></div>
@@ -250,7 +256,7 @@
     if(syncBlocked)app.insertAdjacentHTML('afterbegin',`<div class="sync-warning"><strong>⚠ Senkronizasyon sorunu</strong><p>${esc(syncMessage)} Kayıt yapmadan önce Ayarlar'a git.</p><button class="secondary" data-nav="settings">Ayarları aç</button></div>`);
   }
   function openDialog(title,body){$('#dialog-title').textContent=title;$('#dialog-content').innerHTML=body;$('#dialog-backdrop').hidden=false;document.body.style.overflow='hidden';const el=$('#dialog-content input, #dialog-content select');if(el) setTimeout(()=>el.focus(),80);}
-  function closeDialog(){$('#dialog-backdrop').hidden=true;$('#dialog-content').innerHTML='';document.body.style.overflow='';}
+  function closeDialog(){$('#dialog-backdrop').hidden=true;$('#dialog-content').innerHTML='';document.body.style.overflow='';pendingWorkoutImport=null;}
   function moveTo(tab){view=tab;closeDialog();render();window.scrollTo({top:0,behavior:'instant'});}
   function editDay(){const d=getDay();openDialog('Antrenman gününü düzenle',`<form data-form="edit-day"><div class="field"><label>Gün adı</label><input name="name" maxlength="45" required value="${esc(d.name)}" placeholder="Örn. Göğüs & Triceps"></div><div class="field"><label>Odak / açıklama</label><input name="focus" maxlength="90" value="${esc(d.focus)}" placeholder="Örn. Üst vücut"></div><button class="primary wide" type="submit">Kaydet</button></form>`);}
   function exerciseForm(ex){const editing=!!ex;openDialog(editing?'Hareketi düzenle':'Yeni hareket ekle',`<form data-form="exercise" data-exid="${editing?esc(ex.id):''}">
@@ -258,6 +264,95 @@
       <div class="two-cols"><div class="field"><label>Set sayısı</label><input type="number" name="sets" min="1" max="15" required value="${number(ex?.sets,3)}"></div><div class="field"><label>Tekrar hedefi</label><input type="text" name="reps" maxlength="15" required placeholder="Örn. 10-12" value="${esc(ex?.reps||'10')}"></div></div>
       <div class="two-cols"><div class="field"><label>Başlangıç ağırlığı (kg)</label><input type="number" name="weight" min="0" max="1000" step="0.5" inputmode="decimal" placeholder="İsteğe bağlı" value="${esc(ex?.weight??'')}"></div><div class="field"><label>Dinlenme (saniye)</label><input type="number" name="rest" min="10" max="900" required value="${number(ex?.rest,90)}"></div></div>
       <p class="hint" style="margin-bottom:16px">Hareketi ekledikten sonra her setin gerçek ağırlık ve tekrarını ayrıca girebilirsin.</p><button type="submit" class="primary wide">${editing?'Değişiklikleri kaydet':'Hareketi ekle'}</button></form>`);}
+  // METİN / TXT İLE TOPLU PROGRAM AKTARIMI
+  function showProgramImport(shared=false){
+    if(!window.ALPFIT_IMPORTER){toast('Aktarım modülü yüklenemedi. Sayfayı yenile.');return;}
+    if(shared&&!activeOwner){toast('Önce paylaşılan programı aç.');return;}
+    const days=shared?sharedDays:data.days;
+    const defaultIndex=shared?0:Math.max(0,days.findIndex(d=>d.id===selectedDayId));
+    pendingWorkoutImport=null;
+    openDialog(shared?'Paylaşılan programa metin aktar':'Metin / TXT ile program aktar',`<form data-form="program-import-preview" id="program-import-form">
+      <p class="hint" style="margin:0 0 13px">ChatGPT'den aldığın hareketleri yapıştırabilir veya Not Defteri'ndeki .txt dosyasını seçebilirsin. Önce önizleme, sonra onay.</p>
+      <div class="field"><label for="program-txt-file">Metin dosyası (isteğe bağlı)</label><input id="program-txt-file" type="file" accept=".txt,.md,.csv,text/plain,text/markdown,text/csv" aria-label="TXT dosyası seç"></div>
+      <div class="field"><label for="program-text">Antrenman programını buraya yapıştır</label><textarea id="program-text" name="programText" rows="9" maxlength="120000" required placeholder="Gün 1 - Sabah · Göğüs\nBench Press | 4x10 | 60 kg | 90 sn\nIncline Dumbbell Press | 3x12 | 20 kg | 90 sn\n\nGün 2 - Akşam · Bacak\nSquat | 4x8 | 80 kg | 120 sn"></textarea></div>
+      <div class="field"><label>Hangi program(lar)a aktarılsın?</label><select name="target"><option value="auto">Gün 1–7 başlıklarına göre; başlık yoksa seçili güne</option>${days.map((d,i)=>`<option value="${i}" ${i===defaultIndex?'':''}>Yalnızca ${esc(d.name)}</option>`).join('')}</select></div>
+      <div class="field"><label>Var olan hareketlere ne yapılsın?</label><select name="strategy"><option value="append">Eksik hareketleri ekle (önerilen)</option><option value="replace">İlgili günün hareketleriyle değiştir</option></select></div>
+      <label class="import-check"><input type="checkbox" name="rename" value="1"><span>Gün başlıklarını program adı olarak kullan (mevcut isimler değişebilir)</span></label>
+      <p class="hint" style="margin-top:9px">Örnek: <code>Gün 1 - Sabah</code> ve altına <code>Bench Press | 4x10 | 60 kg | 90 sn</code>. Her program ayrı "Gün" başlığıyla başlayabilir. Sadece hareket listesi de yapıştırabilirsin.</p>
+      <div id="program-import-preview" aria-live="polite"></div><button type="submit" class="secondary wide">🔎 Aktarımı önizle</button>
+    </form>`);
+  }
+  function createImportPlan(parsed,target,strategy,rename,shared){
+    const src=shared?sharedDays:data.days;
+    const next=JSON.parse(JSON.stringify(src));
+    const buckets=new Map();let ignored=0;
+    const currentIndex=shared?0:Math.max(0,src.findIndex(d=>d.id===selectedDayId));
+    for(const group of parsed.groups){
+      const index=target==='auto'?(group.dayIndex??currentIndex):Number(target);
+      if(!Number.isInteger(index)||index<0||index>=next.length){ignored+=group.exercises.length;continue;}
+      if(!buckets.has(index))buckets.set(index,{exercises:[],title:''});
+      const bucket=buckets.get(index);
+      if(group.title)bucket.title=group.title;
+      bucket.exercises.push(...group.exercises);
+    }
+    let added=0,duplicates=0,replaced=0,tooMany=0;
+    for(const [i,bucket] of buckets){
+      const day=next[i];const existing=day.exercises||[];
+      if(rename && bucket.title)day.name=String(`${i+1}. Gün · ${bucket.title}`).slice(0,45);
+      const known=new Set(strategy==='append'?existing.map(ex=>window.ALPFIT_IMPORTER.normalizeName(ex.name)):[]);
+      const oldByName=new Map(existing.map(ex=>[window.ALPFIT_IMPORTER.normalizeName(ex.name),ex]));
+      const result=strategy==='replace'?[]:[...existing];
+      for(const item of bucket.exercises){
+        const key=window.ALPFIT_IMPORTER.normalizeName(item.name);
+        if(known.has(key)){duplicates++;continue;}
+        if(result.length>=60){tooMany++;continue;}
+        const reused=strategy==='replace'?oldByName.get(key):null;
+        result.push({...item,id:reused?.id||uid()});known.add(key);added++;
+      }
+      if(strategy==='replace')replaced+=existing.length;
+      day.exercises=result;
+    }
+    return {days:next,added,duplicates,replaced,tooMany,ignored,affected:[...buckets.keys()].sort((a,b)=>a-b)};
+  }
+  function previewProgramImport(form){
+    try{
+      const fd=new FormData(form),raw=String(fd.get('programText')||'').trim();
+      if(!raw){toast('Önce program metnini yapıştır ya da .txt dosyası seç.');return;}
+      const parsed=window.ALPFIT_IMPORTER.parseWorkoutText(raw);
+      const target=String(fd.get('target')),strategy=String(fd.get('strategy')),rename=fd.has('rename');
+      const shared=!!activeOwner && view==='shared';
+      if(!parsed.matched){pendingWorkoutImport=null;$('#program-import-preview').innerHTML='<div class="form-errors">Hareket okunamadı. Aşağıdaki örneği kullan: Bench Press | 4x10 | 60 kg | 90 sn</div>';return;}
+      const plan=createImportPlan(parsed,target,strategy,rename,shared);
+      const dayList=shared?sharedDays:data.days;
+      const mismatch=target!=='auto' && parsed.hasDayHeaders;
+      pendingWorkoutImport={userId:currentUser?.id,owner:shared?activeOwner:'',revision:shared?sharedRevision:cloudRevision,plan,shared};
+      $('#program-import-preview').innerHTML=`<div class="import-preview"><h3>Önizleme · ${parsed.matched} hareket tanındı</h3>
+        <p class="hint">${plan.added} hareket aktarılacak · ${plan.duplicates} tekrar eden atlanacak${plan.replaced?` · ${plan.replaced} mevcut hareket değişecek`:''}${plan.tooMany?` · ${plan.tooMany} limit nedeniyle atlandı`:''}${plan.ignored?` · ${plan.ignored} başlık/limit uyumsuzluğu nedeniyle atlandı`:''}</p>
+        ${mismatch?'<div class="import-warning">⚠ Metinde farklı gün başlıkları var. Seçimin nedeniyle hepsi aynı programa aktarılacak.</div>':''}
+        ${plan.affected.map(i=>`<div class="import-day"><strong>${esc(dayList[i]?.name||`${i+1}. Gün`)}</strong><span>${plan.days[i].exercises.length} toplam hareket</span><div>${plan.days[i].exercises.slice(0,5).map(ex=>`<span class="import-move">${esc(ex.name)} · ${ex.sets}×${esc(ex.reps)}</span>`).join('')}${plan.days[i].exercises.length>5?`<small>+${plan.days[i].exercises.length-5} hareket</small>`:''}</div></div>`).join('')}
+        ${parsed.skipped.length?`<div class="import-warning">⚠ ${parsed.skipped.length} satır tanınmadı: ${parsed.skipped.slice(0,4).map(esc).join(' · ')}. Lütfen kaydetmeden önce metni kontrol et.</div>`:''}
+        ${strategy==='replace'?'<div class="import-warning">Mevcut hareket listeleri değişecek. Önce Ayarlar → Yedek indir kullanman önerilir. Geçmiş set kayıtları silinmez, ancak kaldırılan hareketlerle eşleşmeyebilir.</div>':''}
+        <button type="button" class="primary wide" data-action="confirm-program-import" ${plan.added===0?'disabled':''}>✓ ${plan.added} hareketi kaydet</button></div>`;
+      $('#program-import-preview').scrollIntoView({behavior:'smooth',block:'nearest'});
+    }catch(error){pendingWorkoutImport=null;$('#program-import-preview').innerHTML=`<div class="form-errors">${esc(error.message)}</div>`;}
+  }
+  async function confirmProgramImport(){
+    const draft=pendingWorkoutImport;
+    if(!draft||!currentUser || draft.userId!==currentUser.id){toast('Önce aktarımı önizle.');return;}
+    if((draft.shared?activeOwner:'')!==draft.owner){toast('Aktarım hedefi değişmiş; yeniden önizle.');return;}
+    if((draft.shared?sharedRevision:cloudRevision)!==draft.revision){toast('Program başka cihazda değişmiş. Yeniden önizle.');return;}
+    if(draft.shared){
+      pendingWorkoutImport=null;
+      await persistSharedDays(draft.plan.days);
+      return;
+    }
+    if(syncBlocked||syncRunning||dirtyCounter!==savedCounter){toast('Önce üstte ☁ Eşitlendi görünmesini bekle. Sonra yeniden önizle.');return;}
+    if(!draft.plan.added){toast('Aktarılacak yeni hareket bulunamadı.');return;}
+    if(!confirm(`${draft.plan.added} hareket, ${draft.plan.affected.length} programa ${draft.plan.replaced?'MEVCUT HAREKETLERİ DEĞİŞTİREREK':'eklenerek'} kaydedilecek. Devam?`))return;
+    const oldDays=data.days;data.days=draft.plan.days;
+    if(!save()){data.days=oldDays;toast('Kaydedilemedi; yerel depolama sorununu kontrol et.');return;}
+    closeDialog();render();toast(`${draft.plan.added} hareket kaydedildi. Bulut eşitleniyor…`);
+  }
   function getFoodQuantity(food){return food.unit==='adet'?1:food.id==='milk'?200:food.id==='oats'||food.id==='nesquik'?50:100;}
   function foodForm(entry){const edit=!!entry;const foods=[...foodLibrary,...data.customFoods];
     openDialog(edit?'Öğün kaydını düzenle':'Besin kaydet',`<form data-form="food-entry" data-entryid="${esc(entry?.id||'')}">
@@ -304,7 +399,7 @@
     $('#today-chip').textContent='';
     updateSyncIndicator();
     const ready=!!client;
-    app.innerHTML=`<div class="auth-wrap"><p class="eyebrow">ALP FIT CLOUD · V2.0</p><h1>İki hesap.<br><span style="color:var(--accent)">Tek uygulama.</span></h1><p class="lead">Bilgisayardan programını kur, iPhone'dan takip et. Her kullanıcının verisi ayrıdır.</p>
+    app.innerHTML=`<div class="auth-wrap"><p class="eyebrow">ALP FIT CLOUD · V2.1</p><h1>İki hesap.<br><span style="color:var(--accent)">Tek uygulama.</span></h1><p class="lead">Bilgisayardan programını kur, iPhone'dan takip et. Her kullanıcının verisi ayrıdır.</p>
     ${!ready?`<div class="card"><h3>⚙ İlk kurulum gerekli</h3><p class="hint">Supabase bağlantısı henüz ayarlanmadı. Bilgisayarında <strong>config.js</strong> dosyasına Project URL ve <strong>publishable / anon</strong> anahtarını yaz. Önce <strong>supabase-setup.sql</strong> dosyasını Supabase SQL Editor'da çalıştır.</p><p class="hint">Asla secret veya service_role anahtarını ekleme.</p></div>`:
     `<div class="card"><h3>Hesabına giriş yap</h3><p class="hint" style="margin:9px 0 16px">Her kişi kendi e-postası ve şifresiyle giriş yapacak.</p>
     <form data-form="auth"><div class="field"><label>E-posta</label><input type="email" name="email" autocomplete="email" required placeholder="ornek@eposta.com"></div>
@@ -363,6 +458,7 @@
       dirtyCounter=0;savedCounter=0;syncBlocked=false;syncMessage='';activeOwner='';
       // Tamamlanmamış yerel düzenlemeyi kullanıcı onayı olmadan bulut kaydıyla ezme.
       const hasPending=localStorage.getItem(pendingKey())==='1';
+      const needsSevenDays=Array.isArray(result.data.payload?.days) && result.data.payload.days.length<7;
       if(hasPending){
         try{data=normalizeData(JSON.parse(localStorage.getItem(cacheKey())));}
         catch{data=normalizeData(result.data.payload);}
@@ -373,6 +469,7 @@
         localStorage.setItem(cacheKey(),JSON.stringify(data));
       }
       selectedDayId=data.days[0]?.id||'day1';selectedDate=today();view='home';render();
+      if(needsSevenDays && !hasPending)save(); // 6. ve 7. gün buluta da güvenli şekilde eklenir.
       await loadShares();
       if(syncBlocked)toast(syncMessage);
     })();
@@ -403,10 +500,11 @@
       if(error)throw error;
       if(currentUser?.id!==userId)return;
       if(discard||Number(row.revision)!==cloudRevision){
+        const needsSevenDays=Array.isArray(row.payload?.days) && row.payload.days.length<7;
         data=normalizeData(row.payload);cloudRevision=Number(row.revision);syncBlocked=false;syncMessage='';dirtyCounter=0;savedCounter=0;
         localStorage.setItem(cacheKey(),JSON.stringify(data));localStorage.removeItem(pendingKey());
         selectedDayId=data.days.find(d=>d.id===selectedDayId)?.id||data.days[0].id;
-        render();if(showMessage)toast('Bulut kayıtları yüklendi.');
+        render();if(needsSevenDays)save();if(showMessage)toast('Bulut kayıtları yüklendi.');
       }else if(showMessage)toast('Tüm kayıtların güncel.');
     }catch(err){if(showMessage)toast('Yenileme hatası: '+err.message);}
   }
@@ -473,7 +571,7 @@
     app.innerHTML=`<p class="eyebrow">ORTAK YÖNETİM</p><h1>Paylaşılan programlar</h1><p class="lead">İzin verilen kullanıcıların yalnızca program tanımlarını değiştirebilirsin.</p>
     ${!incomingShares.length?'<div class="empty"><div class="emoji">🔐</div><strong>Henüz izin verilen program yok</strong><p>Eşin Ayarlar bölümünden izin kodu üretip sana gönderebilir.</p><button class="secondary" data-nav="settings">Ayarlar & izin kodları →</button></div>':''}
     ${incomingShares.map(s=>`<div class="card between"><div><h3>${esc(s.program_label)}</h3><p class="hint">Program sahibi: ${esc(s.owner_id.slice(0,8))}…</p></div><button class="secondary" data-action="shared-open" data-id="${esc(s.owner_id)}">Düzenle →</button></div>`).join('')}
-    ${activeOwner?`<div class="card"><div class="between"><h2>Program düzenleyici</h2><button class="ghost" data-action="shared-close">Kapat ✕</button></div><p class="hint" style="margin-top:9px">Kaydettiğinde karşı tarafın günleri ve hareketleri güncellenir. Tamamlanan setler ve kişisel veriler değişmez.</p></div>
+    ${activeOwner?`<div class="card"><div class="between"><h2>Program düzenleyici</h2><button class="ghost" data-action="shared-close">Kapat ✕</button></div><p class="hint" style="margin-top:9px">Kaydettiğinde karşı tarafın günleri ve hareketleri güncellenir. Tamamlanan setler ve kişisel veriler değişmez.</p><button class="secondary wide" style="margin-top:12px" data-action="open-shared-program-import">📋 Bu programa metin / TXT aktar</button></div>
     ${sharedDays.map((day,i)=>`<div class="card"><div class="between"><div><h3>${esc(day.name)}</h3><p class="hint">${esc(day.focus||'')} · ${(day.exercises||[]).length} hareket</p></div><button class="icon-mini" data-action="shared-edit-day" data-index="${i}">✎</button></div><div class="line"></div>
     ${(day.exercises||[]).map((ex,k)=>`<div class="share-row"><span class="small"><strong>${esc(ex.name)}</strong><br><span class="muted">${Number(ex.sets)} set × ${esc(ex.reps)} tekrar · ${Number(ex.rest||90)} sn</span></span><div class="flex"><button class="icon-mini" data-action="shared-edit-exercise" data-index="${i}" data-exindex="${k}" aria-label="Hareket düzenle">✎</button><button class="icon-mini" data-action="shared-delete-exercise" data-index="${i}" data-exindex="${k}" aria-label="Hareket sil">✕</button></div></div>`).join('')}
     <button class="ghost wide" style="margin-top:12px" data-action="shared-add-exercise" data-index="${i}">+ Hareket ekle</button></div>`).join('')}`:''}
@@ -483,7 +581,7 @@
     const {data:program,error}=await client.rpc('alpfit_read_shared_program',{p_owner:ownerId});
     if(error){toast('Ortak program açılamadı: '+error.message);return;}
     if(!Array.isArray(program.days)){toast('Ortak program geçersiz.');return;}
-    sharedDays=program.days;sharedRevision=Number(program.revision);activeOwner=ownerId;
+    sharedDays=ensureSevenDays(program.days);sharedRevision=Number(program.revision);activeOwner=ownerId;
     moveTo('shared');
   }
   async function persistSharedDays(nextDays){
@@ -553,6 +651,9 @@
       case 'shared-add-exercise': showSharedExerciseForm(Number(btn.dataset.index),-1);break;
       case 'shared-edit-exercise': showSharedExerciseForm(Number(btn.dataset.index),Number(btn.dataset.exindex));break;
       case 'shared-delete-exercise': removeSharedExercise(Number(btn.dataset.index),Number(btn.dataset.exindex));break;
+      case 'open-program-import': showProgramImport(false);break;
+      case 'open-shared-program-import': showProgramImport(true);break;
+      case 'confirm-program-import': confirmProgramImport();break;
       case 'prev-date': selectedDate=offsetDate(selectedDate,-1);render();break;
       case 'next-date': selectedDate=offsetDate(selectedDate,1);render();break;
       case 'today': selectedDate=today();render();break;
@@ -584,8 +685,28 @@
       case 'reset':if(confirm('TÜM kayıtlar silinecek. Önce yedek aldın mı?')&&confirm('Son kararın mı? Bütün veriler sıfırlanacak.')){data=emptyData();selectedDayId=data.days[0].id;selectedDate=today();save();moveTo('home');toast('Veriler sıfırlandı.');}break;
     }
   });
-  document.addEventListener('change',e=>{
+  document.addEventListener('input',e=>{
+    if(e.target.closest('#program-import-form')){
+      pendingWorkoutImport=null;
+      const preview=$('#program-import-preview');
+      if(preview)preview.innerHTML='<p class="hint">Metin değişti. Yeniden önizle.</p>';
+    }
+  });
+  document.addEventListener('change',async e=>{
     const target=e.target;
+    if(target.id==='program-txt-file'){
+      const file=target.files?.[0];if(!file)return;
+      if(file.size>120000){toast('Metin dosyası en fazla 120 KB olabilir.');target.value='';return;}
+      if(!/\.(txt|md|csv)$/i.test(file.name)){toast('Lütfen .txt, .md veya .csv yükle.');target.value='';return;}
+      try{$('#program-text').value=await file.text();pendingWorkoutImport=null;
+        $('#program-import-preview').innerHTML='<p class="hint">Dosya okundu. Aktarımı önizle düğmesine bas.</p>';
+      }catch(err){toast('Dosya okunamadı.');}return;
+    }
+    if(target.closest('#program-import-form')){
+      pendingWorkoutImport=null;
+      $('#program-import-preview').innerHTML='<p class="hint">Seçim değişti. Yeniden önizle.</p>';
+      return;
+    }
     if(target.id==='date-select'){if(/^\d{4}-\d{2}-\d{2}$/.test(target.value)){selectedDate=target.value;render();}return;}
     if(target.dataset.setField){setValue(target.dataset.exid,target.dataset.setindex,target.dataset.setField,target.type==='checkbox'?target.checked:target.value);return;}
   });
@@ -593,6 +714,7 @@
     const form=e.target.closest('form[data-form]');if(!form)return;e.preventDefault();const fd=new FormData(form);const val=name=>String(fd.get(name)??'').trim();
     switch(form.dataset.form){
       case 'auth': authSubmit(val('email'),val('password'),val('mode'));break;
+      case 'program-import-preview': previewProgramImport(form);break;
       case 'password-change': changePassword(val('password1'),val('password2'));break;
       case 'redeem-share': redeemShareCode(val('code'));break;
       case 'shared-day': updateSharedDay(Number(val('index')),val('name'),val('focus'));break;

@@ -90,3 +90,20 @@ input, select, textarea { font-size:16px; }
 .share-row .small{min-width:0;overflow-wrap:anywhere}
 @media (max-width:435px){.date-chip{display:none}.sync-status{max-width:100px;font-size:9px}.topbar{gap:5px}.brand-text{font-size:16px}}
 @media (max-width:370px){.brand-text small{display:none}.sync-status{max-width:84px}}
+
+/* ALP FIT 2.1: toplu program aktarma - mobil ve masaüstü */
+#import-program-form{min-width:0}
+#program-import-form textarea{width:100%;resize:vertical;min-height:170px;line-height:1.55;white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+#program-txt-file{font-size:12px;padding:10px;max-width:100%}
+.import-check{display:flex;align-items:flex-start;gap:10px;margin:7px 0 12px;line-height:1.5;cursor:pointer;font-size:12px;color:var(--text)}
+.import-check input{width:18px;height:18px;min-height:18px;flex-shrink:0;margin:0;accent-color:var(--accent)}
+.import-preview{margin:16px 0;background:var(--card2);border:1px solid var(--line);padding:14px;border-radius:15px}
+.import-preview h3{font-size:16px;margin-bottom:8px}
+.import-day{border-top:1px solid var(--line);padding-top:10px;margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.import-day strong{font-size:14px}
+.import-day>span{font-size:11px;color:var(--muted)}
+.import-day>div{display:flex;flex-wrap:wrap;gap:6px}
+.import-day small{color:var(--muted);align-self:center}
+.import-move{font-size:11px;background:#2a3630;border-radius:8px;padding:6px 8px}
+.import-warning{color:#ffe6b6;background:#4a3929;border:1px solid #715037;border-radius:9px;padding:10px;font-size:12px;line-height:1.6;margin-top:10px;overflow-wrap:anywhere}
+@media (max-width:420px){.import-preview{padding:11px}.import-move{font-size:10px}}
