@@ -4,7 +4,7 @@
   const V2_CACHE_PREFIX = 'alpfit-v2-cache-';
   const V2_DIRTY_PREFIX = 'alpfit-v2-pending-';
   const APP_VERSION = 1; // Yerel veri şeması v1 kalır: mevcut kayıtlar silinmez.
-  const APP_LABEL = '2.1';
+  const APP_LABEL = '2.2';
   const $ = (selector) => document.querySelector(selector);
   const app = $('#app');
   const today = () => {
@@ -189,12 +189,37 @@
     app.innerHTML=`<p class="eyebrow">BESLENME TAKİBİ</p><h1>Beslenmem</h1><p class="lead">Öğünlerini kaydet; kalori ve makrolarını gör. Değerler yaklaşık hesaplanır.</p>${dateNav()}${goalsSummary()}
       <div class="macro-row"><div class="macro"><strong>${fmt(totals.c,1)} g</strong><small>Karbonhidrat</small></div><div class="macro"><strong>${fmt(totals.f,1)} g</strong><small>Yağ</small></div><div class="macro"><strong>${fmt(totals.p,1)} g</strong><small>Protein</small></div></div>
       ${sectionTitle('Hızlı ekle')}<div class="card"><div class="between" style="align-items:flex-start"><div class="grow"><h3>🥣 Alıştığım kahvaltı</h3><p class="hint">50 g yulaf + 50 g Nesquik gevrek + 200 ml az yağlı süt</p><p class="hint">Yumurta beyazını ayrıca ekleyebilirsin.</p></div><button class="primary" data-action="favorite-breakfast">+ Ekle</button></div></div>
-      <div class="button-row"><button class="primary" data-action="open-food">+ Besin ekle</button><button class="secondary" data-action="custom-food">+ Yeni besin tanımla</button></div>
+      <div class="button-row"><button class="primary" data-action="open-food">+ Besin ekle</button><button class="secondary" data-action="food-library">📚 Besin Kütüphanem</button></div>
       ${meals.map(meal=>{
          const list=items.filter(item=>item.meal===meal);const subtotal=list.reduce((a,it)=>{const n=number(it.amount)/number(it.base,100);a.kcal+=number(it.kcal)*n;a.p+=number(it.p)*n;return a;},{kcal:0,p:0});
          return `${sectionTitle(esc(meal),`<span class="small muted">${fmt(subtotal.kcal)} kcal · ${fmt(subtotal.p,1)} g protein</span>`)}<div class="card">${list.length?list.map(item=>foodRow(item)).join(''):`<div class="small muted">Bu öğünde henüz kayıt yok.</div>`}</div>`;
       }).join('')}
       <p class="hint">Besin değerleri ürün, marka ve pişirme şekline göre değişir. Paket üzerindeki değerleri temel alarak kendi besinini tanımlayabilirsin.</p>`;
+  }
+  // V2.2: Besin kütüphanesi sadece kullanıcının kendi customFoods alanını değiştirir.
+  // Geçmiş öğünler ayrı besin bilgisi kopyalarıdır; düzenleme/silme bunları etkilemez.
+  function renderFoodLibrary(){
+    const mine=[...data.customFoods].sort((a,b)=>a.name.localeCompare(b.name,'tr'));
+    const listItem=(food,editable)=>`<div class="library-item" data-food-card data-search="${esc(food.name.toLocaleLowerCase('tr-TR'))}">
+      <div class="food-icon">${esc(food.emoji||'🍽️')}</div>
+      <div class="grow library-info"><div class="food-name">${esc(food.name)}</div>
+        <div class="food-desc">${fmt(food.kcal,1)} kcal · ${fmt(food.p,1)} g protein · ${fmt(food.c,1)} g karbonhidrat · ${fmt(food.f,1)} g yağ</div>
+        <div class="food-desc">${fmt(food.base,1)} ${esc(food.unit)} için</div></div>
+      <div class="library-actions">${editable?`<button class="secondary library-btn" data-action="edit-custom-food" data-id="${esc(food.id)}" aria-label="${esc(food.name)} düzenle">✎ Düzenle</button>
+      <button class="danger-button library-btn" data-action="delete-custom-food" data-id="${esc(food.id)}" aria-label="${esc(food.name)} sil">✕ Sil</button>`:
+      `<button class="secondary library-btn" data-action="copy-default-food" data-id="${esc(food.id)}" aria-label="${esc(food.name)} kopyala">+ Kopyala</button>`}</div></div>`;
+    app.innerHTML=`<div class="library-head"><div><p class="eyebrow">BESLENME · KİŞİSEL LİSTE</p><h1>Besin Kütüphanem</h1></div>
+      <button class="secondary" data-nav="nutrition">← Beslenmeye dön</button></div>
+      <p class="lead">Kendi besinlerini düzenle veya sil. Hazır besinleri kopyalayarak kendi değerlerini oluşturabilirsin.</p>
+      <div class="card library-search-card"><label for="food-library-search">Besin ara</label>
+        <input id="food-library-search" type="search" autocomplete="off" placeholder="Örn. tavuk, protein tozu, süt…" aria-label="Besinlerde ara">
+      </div>
+      ${sectionTitle('Benim besinlerim',`<span class="small muted">${mine.length} besin</span>`)}
+      <div class="button-row" style="margin-bottom:12px"><button class="primary" data-action="custom-food">+ Yeni besin oluştur</button></div>
+      <div class="card library-section" data-library-section>${mine.length?mine.map(f=>listItem(f,true)).join(''):'<p class="hint">Henüz özel besin tanımlamadın. Yukarıdaki butonla ilk besinini ekleyebilirsin.</p>'}</div>
+      ${sectionTitle('Hazır besinler',`<span class="small muted">${foodLibrary.length} besin</span>`)}
+      <div class="card library-section" data-library-section>${foodLibrary.map(f=>listItem(f,false)).join('')}</div>
+      <p class="hint">Kütüphaneden silinen veya düzenlenen besinler geçmiş öğün kayıtlarını değiştirmez. Hazır besinler silinmez; kişisel kopyaları düzenlenebilir.</p>`;
   }
   function foodRow(it){const kcal=number(it.kcal)*number(it.amount)/number(it.base,100); const p=number(it.p)*number(it.amount)/number(it.base,100);
     return `<div class="food-item"><div class="food-icon">${esc(it.emoji||'🍽️')}</div><div class="grow"><div class="food-name">${esc(it.name)}</div><div class="food-desc">${fmt(it.amount,1)} ${esc(it.unit)} · ${fmt(p,1)} g protein</div></div><div class="food-cal">${fmt(kcal)}<small>kcal</small></div><button class="icon-mini" data-action="edit-food-entry" data-id="${esc(it.id)}" title="Düzenle" aria-label="Düzenle">✎</button><button class="icon-mini" data-action="delete-food-entry" data-id="${esc(it.id)}" title="Sil" aria-label="Sil">✕</button></div>`;
@@ -251,7 +276,7 @@
     $('#today-chip').textContent=new Date().toLocaleDateString('tr-TR',{day:'numeric',month:'short'}).toUpperCase();
     const tabs=[['home','⌂','Ana Sayfa'],['workout','▣','Antrenman'],['nutrition','◉','Beslenme'],['progress','▥','Gelişim'],['settings','⚙','Ayarlar']];
     $('#bottom-nav').innerHTML=tabs.map(([id,ico,label])=>`<button class="nav-link ${view===id?'active':''}" data-nav="${id}" aria-current="${view===id?'page':'false'}"><span class="nav-icon" aria-hidden="true">${ico}</span>${label}</button>`).join('');
-    ({home:renderHome,workout:renderWorkout,nutrition:renderNutrition,progress:renderProgress,settings:renderSettings,shared:renderShared}[view]||renderHome)();
+    ({home:renderHome,workout:renderWorkout,nutrition:renderNutrition,'food-library':renderFoodLibrary,progress:renderProgress,settings:renderSettings,shared:renderShared}[view]||renderHome)();
     updateSyncIndicator();
     if(syncBlocked)app.insertAdjacentHTML('afterbegin',`<div class="sync-warning"><strong>⚠ Senkronizasyon sorunu</strong><p>${esc(syncMessage)} Kayıt yapmadan önce Ayarlar'a git.</p><button class="secondary" data-nav="settings">Ayarları aç</button></div>`);
   }
@@ -362,10 +387,18 @@
       <button type="submit" class="primary wide">${edit?'Kaydı güncelle':'Öğüne ekle'}</button></form>`);
     if(!edit){const sel=$('#dialog-content [name=foodid]');const update=()=>{const f=foodById(sel.value);$('#unit-label').textContent=`(${f?.unit||'g'})`;$('#dialog-content [name=amount]').value=getFoodQuantity(f);};sel.addEventListener('change',update);update();}
   }
-  function customFoodForm(){openDialog('Özel besin tanımla',`<form data-form="custom-food"><div class="field"><label>Besin adı</label><input name="name" required maxlength="90" placeholder="Örn. Kullandığım protein tozu"></div>
-      <div class="two-cols"><div class="field"><label>Birim</label><select name="unit"><option value="g">Gram</option><option value="ml">Mililitre</option><option value="adet">Adet</option></select></div><div class="field"><label>Bilgiler hangi miktar için?</label><input name="base" type="number" min="0.1" max="10000" step="0.1" value="100" required></div></div>
-      <div class="two-cols"><div class="field"><label>Kalori (kcal)</label><input name="kcal" type="number" min="0" max="10000" step="0.1" required value="0"></div><div class="field"><label>Protein (g)</label><input name="p" type="number" min="0" max="1000" step="0.1" required value="0"></div><div class="field"><label>Karbonhidrat (g)</label><input name="c" type="number" min="0" max="1000" step="0.1" required value="0"></div><div class="field"><label>Yağ (g)</label><input name="f" type="number" min="0" max="1000" step="0.1" required value="0"></div></div>
-      <p class="hint" style="margin-bottom:15px">Paketin üzerinde yazdığı porsiyon veya 100 g/ml değerlerini kullan.</p><button type="submit" class="primary wide">Besin kütüphaneme ekle</button></form>`);}
+  function customFoodForm(existing=null,copySource=null){
+    const source=existing||copySource;
+    const editing=!!existing;
+    const name=source?(copySource?source.name+' (özel)':source.name):'';
+    openDialog(editing?'Besinimi düzenle':copySource?'Hazır besini kopyala':'Yeni besin tanımla',`<form data-form="custom-food" data-foodid="${esc(existing?.id||'')}" data-emoji="${esc(source?.emoji||'🍽️')}">
+      <div class="field"><label>Besin adı</label><input name="name" required maxlength="90" value="${esc(name)}" placeholder="Örn. Kullandığım protein tozu"></div>
+      <div class="two-cols"><div class="field"><label>Birim</label><select name="unit">${[['g','Gram'],['ml','Mililitre'],['adet','Adet']].map(([u,label])=>`<option value="${u}" ${source?.unit===u?'selected':''}>${label}</option>`).join('')}</select></div>
+      <div class="field"><label>Bilgiler hangi miktar için?</label><input name="base" type="number" min="0.1" max="10000" step="0.1" value="${esc(source?.base??100)}" required></div></div>
+      <div class="two-cols"><div class="field"><label>Kalori (kcal)</label><input name="kcal" type="number" min="0" max="10000" step="0.1" required value="${esc(source?.kcal??0)}"></div><div class="field"><label>Protein (g)</label><input name="p" type="number" min="0" max="1000" step="0.1" required value="${esc(source?.p??0)}"></div><div class="field"><label>Karbonhidrat (g)</label><input name="c" type="number" min="0" max="1000" step="0.1" required value="${esc(source?.c??0)}"></div><div class="field"><label>Yağ (g)</label><input name="f" type="number" min="0" max="1000" step="0.1" required value="${esc(source?.f??0)}"></div></div>
+      <p class="hint" style="margin-bottom:15px">Etikette yazan 100 g, 100 ml veya porsiyon değerlerini kullan. Değişiklikler gelecekte eklediğin öğünler için geçerli olur; geçmiş öğünler korunur.</p>
+      <button type="submit" class="primary wide">${editing?'Değişiklikleri kaydet':'Besin kütüphaneme ekle'}</button></form>`);
+  }
   function weightForm(){openDialog('Vücut ağırlığı kaydet',`<form data-form="weight"><div class="field"><label>Ölçüm tarihi</label><input type="date" name="date" value="${esc(selectedDate)}" required></div><div class="field"><label>Ağırlık (kg)</label><input type="number" name="weight" min="20" max="400" step="0.1" inputmode="decimal" required placeholder="Örn. 78,5" value="${esc(data.weightLogs[selectedDate]??'')}"></div><button class="primary wide" type="submit">Ölçümü kaydet</button></form>`);}
   function addFood(food,amount,meal='Öğün 1'){
     (data.foodLogs[selectedDate] ||= []).push({id:uid(),meal,name:food.name,emoji:food.emoji,unit:food.unit,base:food.base,amount, kcal:food.kcal,p:food.p,c:food.c,f:food.f});
@@ -399,7 +432,7 @@
     $('#today-chip').textContent='';
     updateSyncIndicator();
     const ready=!!client;
-    app.innerHTML=`<div class="auth-wrap"><p class="eyebrow">ALP FIT CLOUD · V2.1</p><h1>İki hesap.<br><span style="color:var(--accent)">Tek uygulama.</span></h1><p class="lead">Bilgisayardan programını kur, iPhone'dan takip et. Her kullanıcının verisi ayrıdır.</p>
+    app.innerHTML=`<div class="auth-wrap"><p class="eyebrow">ALP FIT CLOUD · V2.2</p><h1>İki hesap.<br><span style="color:var(--accent)">Tek uygulama.</span></h1><p class="lead">Bilgisayardan programını kur, iPhone'dan takip et. Her kullanıcının verisi ayrıdır.</p>
     ${!ready?`<div class="card"><h3>⚙ İlk kurulum gerekli</h3><p class="hint">Supabase bağlantısı henüz ayarlanmadı. Bilgisayarında <strong>config.js</strong> dosyasına Project URL ve <strong>publishable / anon</strong> anahtarını yaz. Önce <strong>supabase-setup.sql</strong> dosyasını Supabase SQL Editor'da çalıştır.</p><p class="hint">Asla secret veya service_role anahtarını ekleme.</p></div>`:
     `<div class="card"><h3>Hesabına giriş yap</h3><p class="hint" style="margin:9px 0 16px">Her kişi kendi e-postası ve şifresiyle giriş yapacak.</p>
     <form data-form="auth"><div class="field"><label>E-posta</label><input type="email" name="email" autocomplete="email" required placeholder="ornek@eposta.com"></div>
@@ -675,6 +708,24 @@
       }
       case 'open-food':foodForm(null);break;
       case 'custom-food':customFoodForm();break;
+      case 'food-library':moveTo('food-library');break;
+      case 'edit-custom-food':{
+        const food=data.customFoods.find(f=>f.id===id);
+        if(food)customFoodForm(food);
+        break;
+      }
+      case 'copy-default-food':{
+        const food=foodLibrary.find(f=>f.id===id);
+        if(food)customFoodForm(null,food);
+        break;
+      }
+      case 'delete-custom-food':{
+        const food=data.customFoods.find(f=>f.id===id);
+        if(!food)break;
+        if(!confirm(`“${food.name}” kütüphaneden silinsin mi? Geçmiş öğün kayıtların korunacak.`))break;
+        data.customFoods=data.customFoods.filter(f=>f.id!==id);
+        save();render();toast('Besin kütüphaneden silindi.');break;
+      }
       case 'edit-food-entry':foodForm(getFoods().find(it=>it.id===id));break;
       case 'delete-food-entry':if(confirm('Bu öğün kaydı silinsin mi?')){data.foodLogs[selectedDate]=getFoods().filter(it=>it.id!==id);save();render();toast('Kayıt silindi.');}break;
       case 'add-weight':weightForm();break;
@@ -686,6 +737,13 @@
     }
   });
   document.addEventListener('input',e=>{
+    if(e.target.id==='food-library-search'){
+      const needle=e.target.value.toLocaleLowerCase('tr-TR').trim();
+      document.querySelectorAll('[data-food-card]').forEach(row=>{
+        row.hidden=!row.dataset.search.includes(needle);
+      });
+      return;
+    }
     if(e.target.closest('#program-import-form')){
       pendingWorkoutImport=null;
       const preview=$('#program-import-preview');
@@ -744,9 +802,23 @@
         save();closeDialog();render();toast(id?'Öğün güncellendi.':'Besin eklendi.');break;
       }
       case 'custom-food':{
-        const f={id:uid(),name:val('name'),emoji:'🍽️',unit:val('unit'),base:number(val('base')),kcal:number(val('kcal')),p:number(val('p')),c:number(val('c')),f:number(val('f'))};
-        if(!f.name||f.base<=0||!['g','ml','adet'].includes(f.unit)){toast('Besin bilgilerini kontrol et.');return;}
-        data.customFoods.push(f);save();closeDialog();render();toast('Yeni besin eklendi; öğün ekleme listesinden seçebilirsin.');break;
+        const id=form.dataset.foodid;
+        const previous=id?data.customFoods.find(f=>f.id===id):null;
+        if(id&&!previous){toast('Düzenlenecek besin bulunamadı.');return;}
+        const names=['base','kcal','p','c','f'];
+        if(names.some(k=>val(k)===''||!Number.isFinite(Number(val(k)))||Number(val(k))<0)){
+          toast('Besin değerleri sıfır veya pozitif sayı olmalı.');return;
+        }
+        const f={id:id||uid(),name:val('name'),emoji:previous?.emoji||form.dataset.emoji||'🍽️',unit:val('unit'),
+          base:Number(val('base')),kcal:Number(val('kcal')),p:Number(val('p')),c:Number(val('c')),f:Number(val('f'))};
+        if(!f.name||f.name.length>90||f.base<=0||f.base>10000||f.kcal>10000||['p','c','f'].some(k=>f[k]>1000)||!['g','ml','adet'].includes(f.unit)){
+          toast('Besin bilgilerini kontrol et.');return;
+        }
+        if(previous){
+          const index=data.customFoods.findIndex(food=>food.id===id);
+          data.customFoods[index]=f;
+        }else data.customFoods.push(f);
+        save();closeDialog();render();toast(previous?'Besin güncellendi. Geçmiş öğünler korunuyor.':'Besin kütüphanene eklendi.');break;
       }
       case 'weight':{
         const date=val('date'),weight=number(val('weight'));if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||weight<20||weight>400){toast('Geçerli tarih ve kilo gir.');return;}
